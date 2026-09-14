@@ -135,7 +135,8 @@ be available to the assistant.
 Ask the assistant, for example:
 
 > *List my Moodle courses this semester.*  ·  *List all my Moodle courses.*
-> *What's due in the next two weeks?*  ·  *Any assignments in 1142?*
+> *What's due this week — and have I submitted it?*  ·  *What was due last week?*
+> *Which assignments haven't I submitted yet?*  ·  *Any assignments in 1142?*
 > *What are the latest announcements?*  ·  *Open that announcement and read it.*
 > *What are my grades in course 18284?*  ·  *Do I have any notifications?*
 
