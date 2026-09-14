@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Environment / secrets — never commit credentials
+.env
+.env.*
+*.secret
+
+# Personal MCP client configs (may contain NCCU credentials in headers)
+.mcp.json
+opencode.json
+
+# Moodle session / cookie caches (credentials-equivalent)
+.moodle_cookies.txt
+*.cookies.txt
+
+# Claude Code conversation exports (may contain credentials in plaintext)
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
+# Logs and OS cruft
+*.log
+.DS_Store
