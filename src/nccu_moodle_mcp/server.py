@@ -8,6 +8,7 @@ call, uses the resulting session, and discards it when the call returns. No
 credentials or session tokens are cached to disk or shared between calls, so
 concurrent callers never interfere with one another.
 """
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -16,13 +17,24 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from nccu_moodle_mcp.moodle_client import MoodleClient, MoodleAuthError, prewarm
+from nccu_moodle_mcp.moodle_client import MoodleAuthError, MoodleClient, prewarm
+from nccu_moodle_mcp.tools import (
+    announcements,
+    assignments,
+    contents,
+    courses,
+    deadlines,
+    grades,
+    notifications,
+)
 
 # Reusable, richly-described parameter types (surface as JSON Schema constraints).
 Sem = Annotated[
     str | None,
-    Field(description="NCCU term code, e.g. \"1142\". Omit for the latest "
-                      "semester; \"all\" for every semester."),
+    Field(
+        description='NCCU term code, e.g. "1142". Omit for the latest '
+        'semester; "all" for every semester.'
+    ),
 ]
 CourseId = Annotated[int, Field(description="Moodle course id (from list_courses).")]
 
@@ -56,6 +68,7 @@ def _run(ctx: Context, work):
     except MoodleAuthError as e:
         raise ToolError(f"Moodle login failed: {e}") from e
 
+
 mcp = MCPServer(
     name="nccu-moodle",
     title="NCCU Moodle",
@@ -82,13 +95,13 @@ mcp = MCPServer(
     description=(
         "List the student's enrolled Moodle courses, filtered by semester.\n\n"
         "By default (no `sem`), returns ONLY the latest semester's courses "
-        "(the current term). Pass `sem` as an NCCU term code (e.g. \"1142\") to "
-        "get that semester; pass \"all\" to return every enrolled course.\n\n"
+        '(the current term). Pass `sem` as an NCCU term code (e.g. "1142") to '
+        'get that semester; pass "all" to return every enrolled course.\n\n'
         "Each course is returned as an object with:\n"
         "  - id       (int)  Moodle course id, usable in other course tools\n"
         "  - name     (str)  full course title\n"
         "  - url      (str)  direct link to the course\n"
-        "  - semester (str)  NCCU term code the course belongs to (e.g. \"1151\")\n"
+        '  - semester (str)  NCCU term code the course belongs to (e.g. "1151")\n'
         "  - current  (bool) true if it is in the current (latest) semester\n\n"
         "Authentication is automatic: the user's NCCU credentials come from the "
         "MCP client settings (headers), not from you. Just call the tool; you "
@@ -107,8 +120,8 @@ def list_courses(ctx: Context, sem: Sem = None) -> dict:
     Credentials are read from request headers (see the MCP settings `headers`
     block); they are not parameters of this tool.
     """
-    courses = _run(ctx, lambda m: m.list_courses(sem=sem))
-    return {"count": len(courses), "courses": courses}
+    items = _run(ctx, lambda m: courses.list_courses(m, sem=sem))
+    return {"count": len(items), "courses": items}
 
 
 @mcp.tool(
@@ -120,8 +133,8 @@ def list_courses(ctx: Context, sem: Sem = None) -> dict:
         "  - `course_ids`: if given, list assignments for exactly those Moodle "
         "course ids (from list_courses); `sem` is ignored.\n"
         "  - `sem`: otherwise filter all enrolled courses by NCCU term code. "
-        "Default (neither given) = latest semester; \"1142\" = that term; "
-        "\"all\" = every course.\n\n"
+        'Default (neither given) = latest semester; "1142" = that term; '
+        '"all" = every course.\n\n'
         "Each assignment: {id, course_id, course, name, due, opens, cutoff, url}. "
         "Times are Taipei time 'YYYY-MM-DD HH:MM'; null means unset. Sorted by "
         "due date.\n\n"
@@ -133,13 +146,15 @@ def list_assignments(
     sem: Sem = None,
     course_ids: Annotated[
         list[int] | None,
-        Field(description="Specific Moodle course ids (from list_courses). "
-                          "When given, overrides `sem`."),
+        Field(
+            description="Specific Moodle course ids (from list_courses). "
+            "When given, overrides `sem`."
+        ),
     ] = None,
 ) -> dict:
     """List assignments. `course_ids`: specific courses (overrides `sem`).
     `sem`: omit=latest, a term code, or "all"."""
-    items = _run(ctx, lambda m: m.list_assignments(sem=sem, course_ids=course_ids))
+    items = _run(ctx, lambda m: assignments.list_assignments(m, sem=sem, course_ids=course_ids))
     return {"count": len(items), "assignments": items}
 
 
@@ -157,11 +172,12 @@ def list_assignments(
 )
 def upcoming_deadlines(
     ctx: Context,
-    days: Annotated[int, Field(ge=1, le=365,
-        description="How many days ahead to look (1-365).")] = 14,
+    days: Annotated[
+        int, Field(ge=1, le=365, description="How many days ahead to look (1-365).")
+    ] = 14,
 ) -> dict:
     """Upcoming deadlines across all courses within `days` (default 14)."""
-    items = _run(ctx, lambda m: m.upcoming_deadlines(days=days))
+    items = _run(ctx, lambda m: deadlines.upcoming_deadlines(m, days=days))
     return {"count": len(items), "days": days, "events": items}
 
 
@@ -178,7 +194,7 @@ def upcoming_deadlines(
 )
 def get_grades(ctx: Context, course_id: CourseId) -> dict:
     """Grade items for one course. `course_id` from list_courses."""
-    items = _run(ctx, lambda m: m.get_grades(course_id))
+    items = _run(ctx, lambda m: grades.get_grades(m, course_id))
     return {"course_id": course_id, "count": len(items), "grades": items}
 
 
@@ -196,7 +212,7 @@ def get_grades(ctx: Context, course_id: CourseId) -> dict:
 )
 def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
     """Sections and activities of one course. `course_id` from list_courses."""
-    sections = _run(ctx, lambda m: m.get_course_contents(course_id))
+    sections = _run(ctx, lambda m: contents.get_course_contents(m, course_id))
     return {"course_id": course_id, "count": len(sections), "sections": sections}
 
 
@@ -205,7 +221,7 @@ def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
     title="List announcements",
     description=(
         "List announcement TILES (headers only, no message body) from a course's "
-        "\"Announcements\" forum — like scanning the forum page. To read one, take "
+        '"Announcements" forum — like scanning the forum page. To read one, take '
         "its `discussion_id` and call get_announcement.\n\n"
         "If `course_id` is given, lists that course's announcements; otherwise "
         "aggregates across the current (latest) semester's courses. `limit`/"
@@ -217,14 +233,23 @@ def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
 )
 def list_announcements(
     ctx: Context,
-    course_id: Annotated[int | None, Field(
-        description="Moodle course id (from list_courses). Omit to cover all "
-                    "current-semester courses.")] = None,
+    course_id: Annotated[
+        int | None,
+        Field(
+            description="Moodle course id (from list_courses). Omit to cover all "
+            "current-semester courses."
+        ),
+    ] = None,
     limit: Annotated[int, Field(ge=1, le=50, description="Max tiles to return.")] = 10,
     offset: Annotated[int, Field(ge=0, description="Skip this many (for paging).")] = 0,
 ) -> dict:
     """List announcement tiles. Omit `course_id` for all current courses; page with limit/offset."""
-    items = _run(ctx, lambda m: m.list_announcements(course_id=course_id, limit=limit, offset=offset))
+    items = _run(
+        ctx,
+        lambda m: announcements.list_announcements(
+            m, course_id=course_id, limit=limit, offset=offset
+        ),
+    )
     return {"count": len(items), "offset": offset, "announcements": items}
 
 
@@ -247,7 +272,9 @@ def get_announcement(
     offset: Annotated[int, Field(ge=0, description="Skip this many posts (for paging).")] = 0,
 ) -> dict:
     """Read one announcement's thread. `discussion_id` from list_announcements."""
-    return _run(ctx, lambda m: m.get_announcement(discussion_id, limit=limit, offset=offset))
+    return _run(
+        ctx, lambda m: announcements.get_announcement(m, discussion_id, limit=limit, offset=offset)
+    )
 
 
 @mcp.tool(
@@ -266,7 +293,7 @@ def get_notifications(
     limit: Annotated[int, Field(ge=1, le=50, description="Max notifications to return.")] = 10,
 ) -> dict:
     """The user's notifications (the app's bell)."""
-    items = _run(ctx, lambda m: m.get_notifications(limit=limit))
+    items = _run(ctx, lambda m: notifications.get_notifications(m, limit=limit))
     unread = sum(1 for n in items if not n["read"])
     return {"count": len(items), "unread": unread, "notifications": items}
 
@@ -305,16 +332,16 @@ def main() -> None:
         # so the first user request doesn't pay the discovery latency (best-effort;
         # falls back to lazy discovery on first login if it fails).
         warmed = prewarm()
-        print(f"[startup] site discovery: {'ok ' + warmed[1] if warmed else 'deferred (will retry on first login)'}",
-              file=sys.stderr)
+        status = f"ok {warmed[1]}" if warmed else "deferred (will retry on first login)"
+        print(f"[startup] site discovery: {status}", file=sys.stderr)
 
         mcp.run(
             transport="streamable-http",
             host=os.environ.get("MCP_HOST", "127.0.0.1"),  # set 0.0.0.0 to expose
             port=int(os.environ.get("MCP_PORT", "3033")),
             streamable_http_path="/mcp",
-            json_response=True,     # plain JSON responses (easy to curl), not SSE
-            stateless_http=True,    # each request independent -> no session handshake
+            json_response=True,  # plain JSON responses (easy to curl), not SSE
+            stateless_http=True,  # each request independent -> no session handshake
             transport_security=security,
         )
     else:

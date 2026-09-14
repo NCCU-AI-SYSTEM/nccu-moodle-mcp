@@ -277,8 +277,17 @@ curl -s https://moodle-mcp.example.com/mcp -X POST \
 src/nccu_moodle_mcp/        the package
 ├── __init__.py
 ├── __main__.py             `python -m nccu_moodle_mcp [http]`
-├── server.py               MCP server, tool definitions, startup warm-up
-└── moodle_client.py        MoodleClient: SSO login, site discovery, WS tools
+├── server.py               MCP server: tool registration, credentials, startup warm-up
+├── moodle_client.py        MoodleClient: SSO login, site discovery, ws() core
+├── helpers.py              shared helpers (time / HTML / term-code / semester filter)
+└── tools/                  one module per tool (+ tool-specific helpers)
+    ├── courses.py          list_courses
+    ├── assignments.py      list_assignments
+    ├── deadlines.py        upcoming_deadlines
+    ├── grades.py           get_grades
+    ├── contents.py         get_course_contents
+    ├── announcements.py    list_announcements, get_announcement
+    └── notifications.py    get_notifications
 scripts/
 └── http_client.py          minimal plain-requests client for testing
 pyproject.toml              metadata, deps, `nccu-moodle-mcp` entry point
