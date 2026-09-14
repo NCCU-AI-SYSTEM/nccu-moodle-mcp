@@ -15,7 +15,13 @@ side.
 ### Tools
 | Tool | Description |
 |------|-------------|
-| `list_courses` | List a student's courses grouped by semester. No `sem` → latest semester only; `sem="1142"` or a full label → that semester; `sem="all"` → every semester. |
+| `list_courses` | List a student's enrolled courses by semester. No `sem` → latest semester only; `sem="1142"` (NCCU term code) → that semester; `sem="all"` → every course. |
+
+Course data comes from Moodle's **mobile Web Services API**, not HTML scraping:
+after SSO login, the server obtains a Web Services token the way the Moodle app
+does (`admin/tool/mobile/launch.php` → `moodlemobile://token=…`) and calls the
+REST API (`core_enrol_get_users_courses`). Semester is the NCCU term code encoded
+in each course's short name (e.g. `1151`).
 
 ---
 

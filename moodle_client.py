@@ -35,9 +35,18 @@ UA = (
     "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
 )
 
+# The mobile Web Services token launch is only served to a mobile browser, and
+# Moodle binds the session to the User-Agent — so the WHOLE token flow (SSO login
+# + launch.php) must run under this UA. Used only for token requests; the default
+# session UA stays desktop (UA above).
+IPHONE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
+
 
 class MoodleAuthError(RuntimeError):
-    """Raised when SSO authentication fails (bad credentials, lockout, layout change)."""
+    """Raised when SSO authentication fails (bad credentials, layout change)."""
 
 
 def _inputs(scope) -> dict[str, str]:
@@ -54,13 +63,19 @@ class MoodleClient:
     fullname: str = ""
     base_url: str = MOODLE
     sesskey: str = field(default="", repr=False)
+    ws_token: str = field(default="", repr=False)   # mobile Web Services token
+    userid: int | None = None
 
     # ---- construction ---------------------------------------------------- #
     @classmethod
-    def login(cls, username: str, password: str) -> "MoodleClient":
-        """Run the full NCCU SSO -> Moodle handoff and return a ready client."""
+    def login(cls, username: str, password: str, *, user_agent: str = UA) -> "MoodleClient":
+        """Run the full NCCU SSO -> Moodle handoff and return a ready client.
+
+        user_agent: the User-Agent used for the ENTIRE flow. Moodle binds the
+        session to it, so it must stay constant across login and later requests
+        (e.g. the mobile token launch)."""
         s = requests.Session()
-        s.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+        s.headers.update({"User-Agent": user_agent, "Accept-Language": "en-US,en;q=0.9"})
 
         # 1. GET login form -> ASP.NET hidden state.
         r = s.get(LOGIN_URL)
@@ -78,8 +93,10 @@ class MoodleClient:
         payload["__EVENTARGUMENT"] = ""
         r = s.post(LOGIN_URL, data=payload,
                    headers={"Origin": PORTAL, "Referer": LOGIN_URL}, allow_redirects=True)
+        # The auth ticket (.LDAPAUTH) is issued only on success. If it's absent,
+        # the login was rejected — fail here, immediately, before the token/WS steps.
         if not any(c.name == ".LDAPAUTH" for c in s.cookies):
-            raise MoodleAuthError("Authentication failed: wrong credentials or account locked.")
+            raise MoodleAuthError("Incorrect username or password.")
 
         # 3. Land on the SSO app page and parse its handoff form (one-time token).
         if "MoodleSSO45.aspx" not in r.url:
@@ -134,64 +151,116 @@ class MoodleClient:
         r = self.get("/my/", allow_redirects=True)
         return "/login/" not in r.url
 
+    # ---- Web Services (mobile app style) --------------------------------- #
+    def fetch_ws_token(self) -> str:
+        """Obtain a Moodle mobile Web Services token the way the mobile app does:
+        hit admin/tool/mobile/launch.php on the authenticated web session and read
+        the `moodlemobile://token=<base64>` it returns. The token is cached on this
+        client (`self.ws_token`) and returned.
+
+        Only this request uses the mobile User-Agent (Moodle serves the launch to a
+        mobile browser); the rest of the session stays on its default UA.
+        """
+        import base64
+        import random
+        import re
+
+        passport = random.uniform(0, 1000)
+        r = self.get(
+            "/admin/tool/mobile/launch.php?service=moodle_mobile_app"
+            f"&passport={passport}&urlscheme=moodlemobile",
+            allow_redirects=False,
+            headers={"User-Agent": IPHONE_UA},
+        )
+        # The token comes back either as a Location redirect (desktop) or embedded
+        # in a 200 launch page (mobile). Search both.
+        source = r.headers.get("Location", "") + " " + r.text
+        m = re.search(r"moodlemobile://token=([A-Za-z0-9+/=]+)", source)
+        if not m:
+            raise MoodleAuthError(
+                "Could not obtain a Web Services token (session not authenticated, "
+                "or the mobile service is disabled)."
+            )
+        # base64 -> "signature:::wstoken:::privatetoken"
+        decoded = base64.b64decode(m.group(1)).decode()
+        self.ws_token = decoded.split(":::")[1]
+        return self.ws_token
+
+    def ws(self, wsfunction: str, **params) -> object:
+        """Call a Moodle Web Services REST function and return parsed JSON.
+        Requires a token (fetched lazily via fetch_ws_token)."""
+        if not self.ws_token:
+            self.fetch_ws_token()
+        payload = {
+            "wstoken": self.ws_token,
+            "wsfunction": wsfunction,
+            "moodlewsrestformat": "json",
+            **params,
+        }
+        r = self.session.post(self.url("/webservice/rest/server.php"), data=payload)
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, dict) and data.get("errorcode"):
+            raise MoodleAuthError(f"WS error [{data['errorcode']}]: {data.get('message')}")
+        return data
+
+    def _get_userid(self) -> int:
+        if self.userid is None:
+            info = self.ws("core_webservice_get_site_info")
+            self.userid = info["userid"]
+            self.fullname = self.fullname or info.get("fullname", "")
+        return self.userid
+
     # ---- tools ----------------------------------------------------------- #
     def list_courses(self, sem: str | None = None) -> list[dict]:
-        """List the user's courses from the semester accordion on the Moodle
-        home page (the `card-header` sections under #SemesterGroup).
+        """List the user's courses via the Moodle mobile Web Services API
+        (core_enrol_get_users_courses), grouped/filtered by semester.
+
+        Semester is derived from the leading term code in each course's
+        shortname (e.g. "1151_..." -> "1151"); NCCU encodes it there.
 
         sem : which semester to return.
-              - None (default): only the latest semester (the first block).
-              - a term code or label, e.g. "1142" or "1142-2026 Spring Semester":
-                that semester (matched against the header code/label).
-              - "all": every semester.
+              - None (default): only the latest semester (highest term code).
+              - a term code, e.g. "1142": that semester.
+              - "all": every course, every semester.
 
         Returns one dict per course: {id, name, url, semester, current}
-        `current` is True for the currently-open (expanded) semester.
+        `current` is True for courses in the latest term code.
         """
-        soup = BeautifulSoup(self.get("/").text, "html.parser")
-        group = soup.select_one("#SemesterGroup")
-        if group is None:
+        import re
+
+        raw = self.ws("core_enrol_get_users_courses", userid=self._get_userid())
+        if not isinstance(raw, list):
             return []
 
-        cards = group.select(".card")
+        def term_of(course: dict) -> str:
+            # NCCU term code is the leading 4 digits of the shortname/fullname.
+            text = course.get("shortname") or course.get("fullname") or ""
+            mm = re.match(r"\s*(\d{4})", text)
+            return mm.group(1) if mm else ""
+
+        courses = []
+        for c in raw:
+            courses.append({
+                "id": c.get("id"),
+                "name": c.get("fullname") or c.get("shortname") or "",
+                "url": self.url(f"/course/view.php?id={c.get('id')}"),
+                "semester": term_of(c),
+            })
+
+        terms = [c["semester"] for c in courses if c["semester"]]
+        latest = max(terms) if terms else ""
+        for c in courses:
+            c["current"] = c["semester"] == latest
+
         want = (sem or "").strip().lower()
+        if want in ("", "latest"):
+            courses = [c for c in courses if c["current"]]
+        elif want != "all":
+            courses = [c for c in courses if c["semester"].lower() == want]
 
-        def matches(idx: int, code: str, label: str) -> bool:
-            if want == "" or want == "latest":
-                return idx == 0                      # default -> first block only
-            if want == "all":
-                return True
-            return want == code.lower() or want in label.lower()
-
-        courses: list[dict] = []
-        for idx, card in enumerate(cards):
-            header = card.select_one(".card-header")
-            if header is None:
-                continue
-            code = header.get("id", "")               # e.g. "1151"
-            btn = header.select_one("h5 button, button, h5")
-            label = btn.get_text(strip=True) if btn else header.get_text(strip=True)
-            if not matches(idx, code, label):
-                continue
-
-            collapse = card.select_one(".collapse")
-            is_current = bool(collapse and "show" in (collapse.get("class") or []))
-            body = card.select_one(".card-body")
-            if body is None:
-                continue
-            for a in body.select('a[href*="course/view.php?id="]'):
-                href = a.get("href", "")
-                cid = href.split("id=")[-1].split("&")[0]
-                # The link text carries the full course name (the title attr is
-                # sometimes truncated to just the course code); icon has no text.
-                name = a.get_text(" ", strip=True) or a.get("title", "")
-                courses.append({
-                    "id": int(cid) if cid.isdigit() else cid,
-                    "name": name.strip(),
-                    "url": href if href.startswith("http") else self.url(href),
-                    "semester": label,
-                    "current": is_current,
-                })
+        # Newest term first, preserving API order within a term.
+        courses.sort(key=lambda c: c["semester"], reverse=True)
         return courses
 
     def _hydrate(self, html: str) -> None:

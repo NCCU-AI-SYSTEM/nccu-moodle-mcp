@@ -58,18 +58,15 @@ mcp = MCPServer(
     name="list_courses",
     title="List Moodle courses",
     description=(
-        "List the student's Moodle courses shown on the Moodle home page, "
-        "grouped by semester.\n\n"
-        "By default (no `sem`), returns ONLY the latest semester's courses — "
-        "the first/top block on the page, i.e. the current term. Pass `sem` to "
-        "select a specific semester by its term code (e.g. \"1142\") or by its "
-        "full label (e.g. \"1142-2026 Spring Semester\"); pass \"all\" to return "
-        "courses from every semester.\n\n"
+        "List the student's enrolled Moodle courses, filtered by semester.\n\n"
+        "By default (no `sem`), returns ONLY the latest semester's courses "
+        "(the current term). Pass `sem` as an NCCU term code (e.g. \"1142\") to "
+        "get that semester; pass \"all\" to return every enrolled course.\n\n"
         "Each course is returned as an object with:\n"
         "  - id       (int)  Moodle course id, usable in other course tools\n"
         "  - name     (str)  full course title\n"
         "  - url      (str)  direct link to the course\n"
-        "  - semester (str)  the semester label the course belongs to\n"
+        "  - semester (str)  NCCU term code the course belongs to (e.g. \"1151\")\n"
         "  - current  (bool) true if it is in the current (latest) semester\n\n"
         "Authentication is automatic: the user's NCCU credentials come from the "
         "MCP client settings (headers), not from you. Just call the tool; you "
