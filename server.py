@@ -200,6 +200,53 @@ def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
     return {"course_id": course_id, "count": len(sections), "sections": sections}
 
 
+@mcp.tool(
+    name="get_announcements",
+    title="Get course announcements",
+    description=(
+        "Get course announcements — posts in a course's \"Announcements\" (news) "
+        "forum.\n\n"
+        "If `course_id` is given, returns that course's announcements; otherwise "
+        "aggregates across the current (latest) semester's courses. `limit` caps "
+        "the number returned (newest first).\n\n"
+        "Each announcement: {course_id, course, subject, author, posted, message, "
+        "replies, url}. `posted` is Taipei time 'YYYY-MM-DD HH:MM'.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def get_announcements(
+    ctx: Context,
+    course_id: Annotated[int | None, Field(
+        description="Moodle course id (from list_courses). Omit to cover all "
+                    "current-semester courses.")] = None,
+    limit: Annotated[int, Field(ge=1, le=50, description="Max announcements to return.")] = 10,
+) -> dict:
+    """Course announcements (news forum). Omit `course_id` for all current courses."""
+    items = _run(ctx, lambda m: m.get_announcements(course_id=course_id, limit=limit))
+    return {"count": len(items), "announcements": items}
+
+
+@mcp.tool(
+    name="get_notifications",
+    title="Get notifications",
+    description=(
+        "Get the student's Moodle notifications (the notification bell): "
+        "assignment due reminders, grading, forum posts, etc.\n\n"
+        "Each notification: {subject, message, posted, read, url}, newest first. "
+        "`limit` caps the count. The result also reports how many are unread.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def get_notifications(
+    ctx: Context,
+    limit: Annotated[int, Field(ge=1, le=50, description="Max notifications to return.")] = 10,
+) -> dict:
+    """The user's notifications (the app's bell)."""
+    items = _run(ctx, lambda m: m.get_notifications(limit=limit))
+    unread = sum(1 for n in items if not n["read"])
+    return {"count": len(items), "unread": unread, "notifications": items}
+
+
 def main() -> None:
     """Console entry point. `nccu-moodle-mcp [http]` or `uv run nccu-moodle-mcp`.
 

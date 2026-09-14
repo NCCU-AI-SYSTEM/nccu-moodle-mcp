@@ -20,6 +20,8 @@ side.
 | `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
 | `get_course_contents` | Sections and activities/resources of one course (`course_id`). | `core_course_get_contents` |
+| `get_announcements` | Announcements (news-forum posts); one course or all current-semester courses. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
+| `get_notifications` | The notification bell (due reminders, grading, forum posts); reports unread count. | `message_popup_get_popup_notifications` |
 
 Course data comes from Moodle's **mobile Web Services API**, not HTML scraping:
 after SSO login, the server obtains a Web Services token the way the Moodle app

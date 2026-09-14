@@ -459,6 +459,65 @@ class MoodleClient:
             })
         return sections
 
+    def get_announcements(self, course_id: int | None = None, limit: int = 10) -> list[dict]:
+        """Course announcements — posts in the "Announcements" (news) forum — via
+        mod_forum_get_forums_by_courses + mod_forum_get_forum_discussions.
+
+        course_id : one course; if omitted, aggregates across the latest
+                    semester's courses.
+        Returns newest-first: {course_id, course, subject, author, posted,
+        message, replies, url}, capped at `limit`.
+        """
+        if course_id:
+            course_ids, names = [course_id], {}
+        else:
+            courses = self.list_courses()          # latest semester
+            course_ids = [c["id"] for c in courses]
+            names = {c["id"]: c["name"] for c in courses}
+        if not course_ids:
+            return []
+
+        params = {f"courseids[{i}]": cid for i, cid in enumerate(course_ids)}
+        forums = self.ws("mod_forum_get_forums_by_courses", **params)
+
+        out = []
+        for fo in forums:
+            if fo.get("type") != "news":           # the Announcements forum
+                continue
+            cid = fo.get("course")
+            disc = self.ws("mod_forum_get_forum_discussions", forumid=fo["id"])
+            for d in disc.get("discussions", []):
+                out.append({
+                    "course_id": cid,
+                    "course": names.get(cid, ""),
+                    "subject": d.get("subject") or d.get("name"),
+                    "author": (d.get("userfullname") or "").strip(),
+                    "posted": _ts(d.get("created")),
+                    "message": _text(d.get("message")),
+                    "replies": d.get("numreplies"),
+                    "url": self.url(f"/mod/forum/discuss.php?d={d.get('discussion')}"),
+                })
+        out.sort(key=lambda x: x["posted"] or "", reverse=True)
+        return out[:limit]
+
+    def get_notifications(self, limit: int = 10) -> list[dict]:
+        """The user's notifications (the app's notification bell), via
+        message_popup_get_popup_notifications. Newest first:
+        {subject, message, posted, read, url}."""
+        data = self.ws("message_popup_get_popup_notifications",
+                       useridto=self._get_userid(), limit=limit, offset=0)
+        out = []
+        for n in data.get("notifications", []):
+            out.append({
+                "subject": n.get("subject"),
+                "message": _text(n.get("smallmessage") or n.get("fullmessagehtml")
+                                 or n.get("fullmessage")),
+                "posted": _ts(n.get("timecreated")),
+                "read": bool(n.get("read")),
+                "url": n.get("contexturl"),
+            })
+        return out
+
     def _hydrate(self, html: str) -> None:
         """Pull the logged-in user's name + sesskey. Falls back to /my/ if the
         landing page doesn't carry them."""
