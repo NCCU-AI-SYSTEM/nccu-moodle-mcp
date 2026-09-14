@@ -19,6 +19,7 @@ of them rather than logging in per function.
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
@@ -286,6 +287,39 @@ class MoodleClient:
         if isinstance(data, dict) and data.get("errorcode"):
             raise MoodleAuthError(f"WS error [{data['errorcode']}]: {data.get('message')}")
         return data
+
+    def ws_parallel(self, wsfunction: str, param_list: list[dict], *, max_workers: int = 5) -> list:
+        """Call `wsfunction` once per params dict in `param_list`, concurrently
+        (up to `max_workers`), returning results in input order.
+
+        Thread-safe: the Moodle WS token authenticates each request on its own
+        (no cookie/session state), so each worker issues an independent request
+        rather than sharing this client's Session (which isn't thread-safe).
+        """
+        if not param_list:
+            return []
+        if not self.ws_token:
+            self.fetch_ws_token()
+        url = self.url("/webservice/rest/server.php")
+        ua = self.session.headers.get("User-Agent")
+
+        def one(params: dict):
+            payload = {
+                "wstoken": self.ws_token,
+                "wsfunction": wsfunction,
+                "moodlewsrestformat": "json",
+                **params,
+            }
+            r = requests.post(url, data=payload, headers={"User-Agent": ua})
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, dict) and data.get("errorcode"):
+                raise MoodleAuthError(f"WS error [{data['errorcode']}]: {data.get('message')}")
+            return data
+
+        workers = max(1, min(max_workers, len(param_list)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(one, param_list))
 
     def get_userid(self) -> int:
         """The logged-in user's Moodle id (fetched once via site info)."""
