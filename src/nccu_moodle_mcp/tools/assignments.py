@@ -1,15 +1,16 @@
-"""list_assignments — assignments with due dates, by semester or explicit courses."""
+"""list_assignments — assignments with due dates, status, and a date-range filter."""
 
 from __future__ import annotations
 
-import time
+from datetime import datetime
 from typing import Annotated
 
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from ..app import Sem, mcp, run_tool
-from ..helpers import fmt_time, select_by_sem, term_code
+from ..helpers import TAIPEI, fmt_time, select_by_sem, term_code
 
 
 def _status_from(data: dict) -> str:
@@ -24,20 +25,38 @@ def _status_from(data: dict) -> str:
     return "not submitted"
 
 
+def _to_epoch(value: str | None, *, end_of_day: bool = False) -> int | None:
+    """Parse an ISO date/datetime (Taipei time if no offset) to a unix timestamp.
+    A date-only `due_to` is treated as the end of that day so the bound is
+    inclusive."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip())
+    except ValueError as e:
+        raise ToolError(f"Invalid date {value!r}; use YYYY-MM-DD or YYYY-MM-DD HH:MM.") from e
+    if end_of_day and len(value.strip()) == 10:  # date only
+        dt = dt.replace(hour=23, minute=59, second=59)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TAIPEI)
+    return int(dt.timestamp())
+
+
 def list_assignments(
     client,
     sem: str | None = None,
     course_ids: list[int] | None = None,
-    due_within_days: int | None = None,
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> list[dict]:
     """Assignments via mod_assign_get_assignments. When `course_ids` is given they
     scope the fetch (and `sem` is ignored); otherwise all enrolled courses are
     fetched and filtered by `sem` (default: latest). Returns {id, course_id,
     course, name, due, opens, cutoff, status, url}, sorted by due date.
 
-    due_within_days: if set, keep only assignments whose due date falls between
-    now and now + that many days (e.g. 7 for "due this week"); assignments with
-    no due date are dropped.
+    due_from / due_to: keep only assignments whose due date is within this range.
+    ISO dates in Taipei time, e.g. "2026-09-08" or "2026-09-08 23:59"; either or
+    both may be given. Assignments with no due date are dropped when filtering.
 
     `status` ('graded' / 'submitted' / 'not submitted') is always included — one
     extra request per assignment, so scope the list rather than fetching every
@@ -59,15 +78,18 @@ def list_assignments(
         for co in data.get("courses", [])
     ]
 
-    now = int(time.time())
-    window_end = now + due_within_days * 86400 if due_within_days is not None else None
+    lo = _to_epoch(due_from)
+    hi = _to_epoch(due_to, end_of_day=True)
+    windowed = lo is not None or hi is not None
 
     selected = courses if course_ids else select_by_sem(courses, sem)
     out = []
     for co in selected:
         for a in co["assignments"]:
             due = a.get("duedate") or 0
-            if window_end is not None and not (now <= due <= window_end):
+            if windowed and (
+                not due or (lo is not None and due < lo) or (hi is not None and due > hi)
+            ):
                 continue
             out.append(
                 {
@@ -98,16 +120,18 @@ def list_assignments(
     name="list_assignments",
     title="List assignments",
     description=(
-        "List assignments (with due dates) for the student's courses.\n\n"
+        "List assignments (with due dates and submission status) for the "
+        "student's courses.\n\n"
         "Scope, in priority order:\n"
         "  - `course_ids`: if given, list assignments for exactly those Moodle "
         "course ids (from list_courses); `sem` is ignored.\n"
         "  - `sem`: otherwise filter all enrolled courses by NCCU term code. "
         'Default (neither given) = latest semester; "1142" = that term; '
         '"all" = every course.\n\n'
-        "Set `due_within_days` to only return assignments due within that many "
-        "days from now (e.g. 7 for 'due this week') — the best way to answer "
-        "'what's due soon', since it also carries submission status.\n\n"
+        "Filter by due date with `due_from` / `due_to` (ISO dates in Taipei time, "
+        'e.g. "2026-09-08"). Compute the range from today for questions like '
+        "'due this week' or 'due last week'. This is the best way to answer "
+        "'what's due (in some period)', since it also carries submission status.\n\n"
         "Each assignment: {id, course_id, course, name, due, opens, cutoff, "
         "status, url}, where `status` is 'graded' / 'submitted' / 'not submitted'. "
         "Times are Taipei time 'YYYY-MM-DD HH:MM'; null means unset. Sorted by "
@@ -125,15 +149,19 @@ def _list_assignments(
             "When given, overrides `sem`."
         ),
     ] = None,
-    due_within_days: Annotated[
-        int | None,
-        Field(ge=1, le=365, description="Only assignments due within this many days from now."),
+    due_from: Annotated[
+        str | None,
+        Field(description="Only assignments due on/after this ISO date (Taipei tz)."),
+    ] = None,
+    due_to: Annotated[
+        str | None,
+        Field(description="Only assignments due on/before this ISO date (Taipei tz)."),
     ] = None,
 ) -> dict:
     items = run_tool(
         ctx,
         lambda m: list_assignments(
-            m, sem=sem, course_ids=course_ids, due_within_days=due_within_days
+            m, sem=sem, course_ids=course_ids, due_from=due_from, due_to=due_to
         ),
     )
     return {"count": len(items), "assignments": items}
