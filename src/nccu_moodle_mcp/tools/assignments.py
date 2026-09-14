@@ -42,21 +42,34 @@ def _to_epoch(value: str | None, *, end_of_day: bool = False) -> int | None:
     return int(dt.timestamp())
 
 
+def _in_window(ts: int, lo: int | None, hi: int | None) -> bool:
+    """Is timestamp `ts` inside [lo, hi]? No bounds -> always True (no filter);
+    with a bound, a missing timestamp (0) is excluded."""
+    if lo is None and hi is None:
+        return True
+    if not ts:
+        return False
+    return (lo is None or ts >= lo) and (hi is None or ts <= hi)
+
+
 def list_assignments(
     client,
     sem: str | None = None,
     course_ids: list[int] | None = None,
     due_from: str | None = None,
     due_to: str | None = None,
+    opens_from: str | None = None,
+    opens_to: str | None = None,
 ) -> list[dict]:
     """Assignments via mod_assign_get_assignments. When `course_ids` is given they
     scope the fetch (and `sem` is ignored); otherwise all enrolled courses are
     fetched and filtered by `sem` (default: latest). Returns {id, course_id,
     course, name, due, opens, cutoff, status, url}, sorted by due date.
 
-    due_from / due_to: keep only assignments whose due date is within this range.
-    ISO dates in Taipei time, e.g. "2026-09-08" or "2026-09-08 23:59"; either or
-    both may be given. Assignments with no due date are dropped when filtering.
+    due_from / due_to: keep only assignments whose DUE date is within this range.
+    opens_from / opens_to: same, but on the OPEN (submissions-from) date.
+    All are ISO dates in Taipei time, e.g. "2026-09-08" or "2026-09-08 23:59";
+    give any subset. Assignments missing the filtered date are dropped.
 
     `status` ('graded' / 'submitted' / 'not submitted') is always included — one
     extra request per assignment, so scope the list rather than fetching every
@@ -78,18 +91,16 @@ def list_assignments(
         for co in data.get("courses", [])
     ]
 
-    lo = _to_epoch(due_from)
-    hi = _to_epoch(due_to, end_of_day=True)
-    windowed = lo is not None or hi is not None
+    due_lo, due_hi = _to_epoch(due_from), _to_epoch(due_to, end_of_day=True)
+    open_lo, open_hi = _to_epoch(opens_from), _to_epoch(opens_to, end_of_day=True)
 
     selected = courses if course_ids else select_by_sem(courses, sem)
     out = []
     for co in selected:
         for a in co["assignments"]:
             due = a.get("duedate") or 0
-            if windowed and (
-                not due or (lo is not None and due < lo) or (hi is not None and due > hi)
-            ):
+            opens = a.get("allowsubmissionsfromdate") or 0
+            if not _in_window(due, due_lo, due_hi) or not _in_window(opens, open_lo, open_hi):
                 continue
             out.append(
                 {
@@ -128,10 +139,12 @@ def list_assignments(
         "  - `sem`: otherwise filter all enrolled courses by NCCU term code. "
         'Default (neither given) = latest semester; "1142" = that term; '
         '"all" = every course.\n\n'
-        "Filter by due date with `due_from` / `due_to` (ISO dates in Taipei time, "
-        'e.g. "2026-09-08"). Compute the range from today for questions like '
-        "'due this week' or 'due last week'. This is the best way to answer "
-        "'what's due (in some period)', since it also carries submission status.\n\n"
+        'Filter by date (ISO dates in Taipei time, e.g. "2026-09-08"): '
+        "`due_from`/`due_to` bound the DUE date, `opens_from`/`opens_to` bound the "
+        "OPEN (submissions-from) date. Give any subset; compute ranges from today "
+        "for 'due this week', 'opened last week', etc. This is the best way to "
+        "answer 'what's due/opened in some period', since it also carries "
+        "submission status.\n\n"
         "Each assignment: {id, course_id, course, name, due, opens, cutoff, "
         "status, url}, where `status` is 'graded' / 'submitted' / 'not submitted'. "
         "Times are Taipei time 'YYYY-MM-DD HH:MM'; null means unset. Sorted by "
@@ -157,11 +170,25 @@ def _list_assignments(
         str | None,
         Field(description="Only assignments due on/before this ISO date (Taipei tz)."),
     ] = None,
+    opens_from: Annotated[
+        str | None,
+        Field(description="Only assignments opening on/after this ISO date (Taipei tz)."),
+    ] = None,
+    opens_to: Annotated[
+        str | None,
+        Field(description="Only assignments opening on/before this ISO date (Taipei tz)."),
+    ] = None,
 ) -> dict:
     items = run_tool(
         ctx,
         lambda m: list_assignments(
-            m, sem=sem, course_ids=course_ids, due_from=due_from, due_to=due_to
+            m,
+            sem=sem,
+            course_ids=course_ids,
+            due_from=due_from,
+            due_to=due_to,
+            opens_from=opens_from,
+            opens_to=opens_to,
         ),
     )
     return {"count": len(items), "assignments": items}
