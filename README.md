@@ -13,9 +13,13 @@ side.
   cached to disk or shared between calls, so concurrent users never interfere.
 
 ### Tools
-| Tool | Description |
-|------|-------------|
-| `list_courses` | List a student's enrolled courses by semester. No `sem` → latest semester only; `sem="1142"` (NCCU term code) → that semester; `sem="all"` → every course. |
+| Tool | Description | WS function |
+|------|-------------|-------------|
+| `list_courses` | Enrolled courses by semester. No `sem` → latest; `sem="1142"` → that term; `sem="all"` → every course. | `core_enrol_get_users_courses` |
+| `list_assignments` | Assignments with due dates for a semester's courses (`sem` like `list_courses`). | `mod_assign_get_assignments` |
+| `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
+| `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
+| `get_course_contents` | Sections and activities/resources of one course (`course_id`). | `core_course_get_contents` |
 
 Course data comes from Moodle's **mobile Web Services API**, not HTML scraping:
 after SSO login, the server obtains a Web Services token the way the Moodle app

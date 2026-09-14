@@ -10,10 +10,21 @@ concurrent callers never interfere with one another.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import Field
 
 from moodle_client import MoodleClient, MoodleAuthError
+
+# Reusable, richly-described parameter types (surface as JSON Schema constraints).
+Sem = Annotated[
+    str | None,
+    Field(description="NCCU term code, e.g. \"1142\". Omit for the latest "
+                      "semester; \"all\" for every semester."),
+]
+CourseId = Annotated[int, Field(description="Moodle course id (from list_courses).")]
 
 # Header names clients configure in their MCP settings (the `headers` block).
 USER_HEADER = "X-Moodle-Username"
@@ -33,6 +44,17 @@ def _resolve_credentials(ctx: Context) -> tuple[str, str]:
             f"`headers` block as '{USER_HEADER}' and '{PASS_HEADER}'."
         )
     return user, pw
+
+
+def _run(ctx: Context, work):
+    """Resolve header credentials, log in (stateless), run `work(client)`, and
+    turn an auth failure into a clean tool error."""
+    user, pw = _resolve_credentials(ctx)
+    try:
+        with MoodleClient.login(user, pw) as m:
+            return work(m)
+    except MoodleAuthError as e:
+        raise ToolError(f"Moodle login failed: {e}") from e
 
 mcp = MCPServer(
     name="nccu-moodle",
@@ -73,7 +95,7 @@ mcp = MCPServer(
         "never need — or have — the user's password."
     ),
 )
-def list_courses(ctx: Context, sem: str | None = None) -> dict:
+def list_courses(ctx: Context, sem: Sem = None) -> dict:
     """
     Args:
         sem: Semester to list. Omit for the latest semester only; a term code
@@ -85,15 +107,97 @@ def list_courses(ctx: Context, sem: str | None = None) -> dict:
     Credentials are read from request headers (see the MCP settings `headers`
     block); they are not parameters of this tool.
     """
-    user, pw = _resolve_credentials(ctx)
-    try:
-        with MoodleClient.login(user, pw) as m:
-            courses = m.list_courses(sem=sem)
-            return {"count": len(courses), "courses": courses}
-    except MoodleAuthError as e:
-        # Anticipated failure: return is_error with a readable message for the
-        # model, rather than a generic "unexpected tool error" crash.
-        raise ToolError(f"Moodle login failed: {e}") from e
+    courses = _run(ctx, lambda m: m.list_courses(sem=sem))
+    return {"count": len(courses), "courses": courses}
+
+
+@mcp.tool(
+    name="list_assignments",
+    title="List assignments",
+    description=(
+        "List assignments (with due dates) for the student's courses.\n\n"
+        "Scope, in priority order:\n"
+        "  - `course_ids`: if given, list assignments for exactly those Moodle "
+        "course ids (from list_courses); `sem` is ignored.\n"
+        "  - `sem`: otherwise filter all enrolled courses by NCCU term code. "
+        "Default (neither given) = latest semester; \"1142\" = that term; "
+        "\"all\" = every course.\n\n"
+        "Each assignment: {id, course_id, course, name, due, opens, cutoff, url}. "
+        "Times are Taipei time 'YYYY-MM-DD HH:MM'; null means unset. Sorted by "
+        "due date.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def list_assignments(
+    ctx: Context,
+    sem: Sem = None,
+    course_ids: Annotated[
+        list[int] | None,
+        Field(description="Specific Moodle course ids (from list_courses). "
+                          "When given, overrides `sem`."),
+    ] = None,
+) -> dict:
+    """List assignments. `course_ids`: specific courses (overrides `sem`).
+    `sem`: omit=latest, a term code, or "all"."""
+    items = _run(ctx, lambda m: m.list_assignments(sem=sem, course_ids=course_ids))
+    return {"count": len(items), "assignments": items}
+
+
+@mcp.tool(
+    name="upcoming_deadlines",
+    title="Upcoming deadlines",
+    description=(
+        "List the student's upcoming action events (assignment due dates, quiz "
+        "closings, etc.) across ALL courses within the next `days` (default 14). "
+        "This is the best 'what's due soon' overview.\n\n"
+        "Each event: {name, course, due, overdue, module, url}. `due` is Taipei "
+        "time 'YYYY-MM-DD HH:MM'. Sorted soonest first.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def upcoming_deadlines(
+    ctx: Context,
+    days: Annotated[int, Field(ge=1, le=365,
+        description="How many days ahead to look (1-365).")] = 14,
+) -> dict:
+    """Upcoming deadlines across all courses within `days` (default 14)."""
+    items = _run(ctx, lambda m: m.upcoming_deadlines(days=days))
+    return {"count": len(items), "days": days, "events": items}
+
+
+@mcp.tool(
+    name="get_grades",
+    title="Get course grades",
+    description=(
+        "Get the student's own grade items for one course (by Moodle course id, "
+        "from list_courses).\n\n"
+        "Each item: {item, grade, percentage, range, feedback, type}. A '-' grade "
+        "means not yet graded.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def get_grades(ctx: Context, course_id: CourseId) -> dict:
+    """Grade items for one course. `course_id` from list_courses."""
+    items = _run(ctx, lambda m: m.get_grades(course_id))
+    return {"course_id": course_id, "count": len(items), "grades": items}
+
+
+@mcp.tool(
+    name="get_course_contents",
+    title="Get course contents",
+    description=(
+        "Get the sections and activities/resources of one course (by Moodle "
+        "course id, from list_courses) — the course outline.\n\n"
+        "Each section: {section, summary, modules:[{name, type, url}]}, where "
+        "`type` is the Moodle module (assign, resource, url, forum, quiz, page, "
+        "folder, label, …).\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
+    """Sections and activities of one course. `course_id` from list_courses."""
+    sections = _run(ctx, lambda m: m.get_course_contents(course_id))
+    return {"course_id": course_id, "count": len(sections), "sections": sections}
 
 
 def main() -> None:

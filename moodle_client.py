@@ -18,11 +18,51 @@ of them rather than logging in per function.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+# NCCU is UTC+8; Moodle returns unix timestamps.
+TAIPEI = timezone(timedelta(hours=8))
+
+
+def _ts(epoch) -> str | None:
+    """Unix timestamp -> 'YYYY-MM-DD HH:MM' in Taipei time, or None if unset (0)."""
+    if not epoch:
+        return None
+    return datetime.fromtimestamp(int(epoch), TAIPEI).strftime("%Y-%m-%d %H:%M")
+
+
+def _text(html: str | None) -> str:
+    """Strip HTML to plain text (for summaries / feedback)."""
+    if not html:
+        return ""
+    return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+
+
+def _term_code(text: str | None) -> str:
+    """NCCU term code = the leading 4 digits of a course short/full name (e.g. '1151')."""
+    import re
+    m = re.match(r"\s*(\d{4})", text or "")
+    return m.group(1) if m else ""
+
+
+def _select_by_sem(items: list[dict], sem: str | None, term_key: str = "semester") -> list[dict]:
+    """Filter items (each carrying a term code under `term_key`) by `sem`:
+    None/''/'latest' -> only the highest (latest) term; 'all' -> everything;
+    otherwise -> exact term-code match."""
+    want = (sem or "").strip().lower()
+    terms = [it[term_key] for it in items if it.get(term_key)]
+    latest = max(terms) if terms else ""
+    if want in ("", "latest"):
+        return [it for it in items if it.get(term_key) == latest]
+    if want == "all":
+        return list(items)
+    return [it for it in items if (it.get(term_key) or "").lower() == want]
 
 PORTAL = "https://i.nccu.edu.tw"
 LOGIN_URL = f"{PORTAL}/Login.aspx?ReturnUrl=%2fsso_app%2fMoodleSSO45.aspx"
@@ -227,41 +267,129 @@ class MoodleClient:
         Returns one dict per course: {id, name, url, semester, current}
         `current` is True for courses in the latest term code.
         """
-        import re
-
         raw = self.ws("core_enrol_get_users_courses", userid=self._get_userid())
         if not isinstance(raw, list):
             return []
 
-        def term_of(course: dict) -> str:
-            # NCCU term code is the leading 4 digits of the shortname/fullname.
-            text = course.get("shortname") or course.get("fullname") or ""
-            mm = re.match(r"\s*(\d{4})", text)
-            return mm.group(1) if mm else ""
-
-        courses = []
-        for c in raw:
-            courses.append({
-                "id": c.get("id"),
-                "name": c.get("fullname") or c.get("shortname") or "",
-                "url": self.url(f"/course/view.php?id={c.get('id')}"),
-                "semester": term_of(c),
-            })
+        courses = [{
+            "id": c.get("id"),
+            "name": c.get("fullname") or c.get("shortname") or "",
+            "url": self.url(f"/course/view.php?id={c.get('id')}"),
+            "semester": _term_code(c.get("shortname") or c.get("fullname")),
+        } for c in raw]
 
         terms = [c["semester"] for c in courses if c["semester"]]
         latest = max(terms) if terms else ""
         for c in courses:
             c["current"] = c["semester"] == latest
 
-        want = (sem or "").strip().lower()
-        if want in ("", "latest"):
-            courses = [c for c in courses if c["current"]]
-        elif want != "all":
-            courses = [c for c in courses if c["semester"].lower() == want]
-
+        courses = _select_by_sem(courses, sem)
         # Newest term first, preserving API order within a term.
         courses.sort(key=lambda c: c["semester"], reverse=True)
         return courses
+
+    def list_assignments(self, sem: str | None = None,
+                          course_ids: list[int] | None = None) -> list[dict]:
+        """List assignments via mod_assign_get_assignments. One dict per assignment:
+        {id, course_id, course, name, due, opens, cutoff, url}. Sorted by due date.
+
+        course_ids : restrict to these Moodle course ids (passed to Moodle as
+                     `courseids`). When given, `sem` is ignored.
+        sem        : when course_ids is not given, filter all enrolled courses by
+                     semester term code (default: latest). See list_courses.
+        """
+        if course_ids:
+            params = {f"courseids[{i}]": cid for i, cid in enumerate(course_ids)}
+            data = self.ws("mod_assign_get_assignments", **params)
+        else:
+            data = self.ws("mod_assign_get_assignments")   # all enrolled courses
+
+        courses = [{
+            "id": co.get("id"),
+            "name": co.get("fullname") or co.get("shortname") or "",
+            "semester": _term_code(co.get("shortname") or co.get("fullname")),
+            "assignments": co.get("assignments", []),
+        } for co in data.get("courses", [])]
+
+        # Explicit course_ids already scoped the fetch; otherwise filter by sem.
+        selected = courses if course_ids else _select_by_sem(courses, sem)
+        out = []
+        for co in selected:
+            for a in co["assignments"]:
+                out.append({
+                    "id": a.get("id"),
+                    "course_id": co["id"],
+                    "course": co["name"],
+                    "name": a.get("name"),
+                    "due": _ts(a.get("duedate")),
+                    "opens": _ts(a.get("allowsubmissionsfromdate")),
+                    "cutoff": _ts(a.get("cutoffdate")),
+                    "url": self.url(f"/mod/assign/view.php?id={a.get('cmid')}"),
+                })
+        out.sort(key=lambda x: x["due"] or "9999")
+        return out
+
+    def upcoming_deadlines(self, days: int = 14) -> list[dict]:
+        """Upcoming action events (assignment due dates, quizzes, etc.) across all
+        courses in the next `days`, via core_calendar_get_action_events_by_timesort.
+        One dict per event: {name, course, due, overdue, module, url}."""
+        now = int(time.time())
+        data = self.ws(
+            "core_calendar_get_action_events_by_timesort",
+            timesortfrom=now, timesortto=now + days * 86400, limitnum=50,
+        )
+        out = []
+        for e in data.get("events", []):
+            out.append({
+                "name": e.get("name"),
+                "course": (e.get("course") or {}).get("fullname", ""),
+                "due": _ts(e.get("timesort")),
+                "overdue": bool(e.get("overdue")),
+                "module": e.get("modulename"),
+                "url": e.get("url") or e.get("viewurl"),
+            })
+        return out
+
+    def get_grades(self, course_id: int) -> list[dict]:
+        """Your grade items for one course, via gradereport_user_get_grade_items.
+        One dict per item: {item, grade, percentage, range, feedback, type}."""
+        data = self.ws("gradereport_user_get_grade_items",
+                       courseid=course_id, userid=self._get_userid())
+        usergrades = data.get("usergrades", [])
+        if not usergrades:
+            return []
+        out = []
+        for it in usergrades[0].get("gradeitems", []):
+            name = it.get("itemname")
+            if not name and it.get("itemtype") == "course":
+                name = "Course total"
+            out.append({
+                "item": name or it.get("itemtype"),
+                "grade": it.get("gradeformatted"),
+                "percentage": it.get("percentageformatted"),
+                "range": it.get("rangeformatted"),
+                "feedback": _text(it.get("feedback")),
+                "type": it.get("itemtype"),
+            })
+        return out
+
+    def get_course_contents(self, course_id: int) -> list[dict]:
+        """Sections and activities/resources of a course, via core_course_get_contents.
+        One dict per section: {section, summary, modules:[{name, type, url}]}."""
+        data = self.ws("core_course_get_contents", courseid=course_id)
+        sections = []
+        for s in data:
+            modules = [{
+                "name": mod.get("name"),
+                "type": mod.get("modname"),
+                "url": mod.get("url"),
+            } for mod in s.get("modules", [])]
+            sections.append({
+                "section": s.get("name"),
+                "summary": _text(s.get("summary")),
+                "modules": modules,
+            })
+        return sections
 
     def _hydrate(self, html: str) -> None:
         """Pull the logged-in user's name + sesskey. Falls back to /my/ if the
