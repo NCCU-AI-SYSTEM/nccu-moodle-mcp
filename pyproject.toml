@@ -11,12 +11,11 @@ dependencies = [
 ]
 
 [project.scripts]
-nccu-moodle-mcp = "server:main"
+nccu-moodle-mcp = "nccu_moodle_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# Flat single-file modules (not a package directory).
-include = ["server.py", "moodle_client.py", "client.py"]
+packages = ["src/nccu_moodle_mcp"]

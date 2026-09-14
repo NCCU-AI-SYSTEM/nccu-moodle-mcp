@@ -89,15 +89,17 @@ COPY --exclude=.devcontainer/ --chown=${NONROOT_USERNAME}:${NONROOT_USERNAME} . 
 
 # MCP server configuration (override at `docker run` time):
 #   MCP_ALLOWED_HOSTS  hostnames allowed in the Host header (DNS-rebinding guard).
-#                      REQUIRED for access via a domain/IP; use "*" only behind a
-#                      trusted reverse proxy. Unset = localhost only.
+#                      Default "*" allows any host; set names to lock down.
 #   MCP_HOST / MCP_PORT  bind address and port.
+# The venv holds only dependencies (project not installed), so put the src
+# package on the import path and run it with `python -m`.
 ENV MCP_HOST=0.0.0.0 \
-    MCP_PORT=3033
+    MCP_PORT=3033 \
+    PYTHONPATH="${PROJECT_PATH}/src"
 EXPOSE 3033
 
 # Run the NCCU Moodle MCP server over Streamable HTTP.
-CMD ["python", "server.py", "http"]
+CMD ["python", "-m", "nccu_moodle_mcp", "http"]
 
 ################################################################################
 

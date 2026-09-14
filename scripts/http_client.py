@@ -5,14 +5,14 @@ Because the server runs stateless with json_response, a tool call is a single
 JSON-RPC POST to /mcp -- no initialize handshake, no session id. This uses plain
 `requests`, so it needs no MCP SDK.
 
-    uv run python client.py 112703016 'password' [sem]
+    uv run python scripts/http_client.py 112703016 'password' [sem]
 """
 import json
 import sys
 
 import requests
 
-URL = "http://127.0.0.1:8000/mcp"
+URL = "http://127.0.0.1:3033/mcp"
 HEADERS = {"Content-Type": "application/json",
            "Accept": "application/json, text/event-stream"}
 

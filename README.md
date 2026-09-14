@@ -271,15 +271,19 @@ curl -s https://moodle-mcp.example.com/mcp -X POST \
 
 ---
 
-## Files
+## Layout
 
-| File | Purpose |
-|------|---------|
-| `server.py` | MCP server (stdio + HTTP), the 5 tool definitions, startup discovery warm-up |
-| `moodle_client.py` | `MoodleClient`: stateless SSO login, site auto-discovery, and all Web-Services tools |
-| `client.py` | Minimal HTTP client for testing (plain `requests`) |
-| `pyproject.toml` | Project metadata, dependencies, `nccu-moodle-mcp` entry point |
-| `uv.lock` | Pinned dependency lockfile (committed) |
-| `Dockerfile` | Multi-stage uv build; `prod` target runs the HTTP server |
-| `docker-compose.yml` | Service `nccucourse` — build + run on port 3033 with a healthcheck |
-| `.dockerignore` | Keeps `.venv`, secrets, caches out of the build context |
+```
+src/nccu_moodle_mcp/        the package
+├── __init__.py
+├── __main__.py             `python -m nccu_moodle_mcp [http]`
+├── server.py               MCP server, tool definitions, startup warm-up
+└── moodle_client.py        MoodleClient: SSO login, site discovery, WS tools
+scripts/
+└── http_client.py          minimal plain-requests client for testing
+pyproject.toml              metadata, deps, `nccu-moodle-mcp` entry point
+uv.lock                     pinned lockfile (committed)
+Dockerfile                  multi-stage uv build; `prod` target runs the server
+docker-compose.yml          service `nccucourse` — build + run on port 3033
+.dockerignore               keeps .venv, secrets, caches out of the build context
+```

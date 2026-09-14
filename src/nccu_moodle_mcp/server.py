@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from moodle_client import MoodleClient, MoodleAuthError, prewarm
+from nccu_moodle_mcp.moodle_client import MoodleClient, MoodleAuthError, prewarm
 
 # Reusable, richly-described parameter types (surface as JSON Schema constraints).
 Sem = Annotated[
