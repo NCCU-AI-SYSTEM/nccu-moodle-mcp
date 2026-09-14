@@ -1,0 +1,25 @@
+# Never send these into the build context / image
+**/.venv/
+**/venv/
+**/env/
+**/__pycache__/
+**/*.py[cod]
+
+**/.git/
+.gitignore
+
+# Secrets / local artifacts (mirror .gitignore)
+**/.env
+**/.env.*
+**/.mcp.json
+**/opencode.json
+**/.moodle_cookies.txt
+**/*.cookies.txt
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
+# Docker / editor cruft
+Dockerfile
+.dockerignore
+**/*.log
+**/.DS_Store
+.devcontainer/

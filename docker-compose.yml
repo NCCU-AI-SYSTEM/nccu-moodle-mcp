@@ -1,0 +1,38 @@
+# NCCU Moodle MCP — Streamable HTTP server.
+#
+#   docker compose up -d --build      # build and start
+#   docker compose logs -f            # watch logs
+#   docker compose down               # stop
+#
+# For access via a domain/IP (not just localhost), set MCP_ALLOWED_HOSTS in a
+# local .env file or the shell, e.g.  MCP_ALLOWED_HOSTS=moodle-mcp.example.com
+services:
+  nccucourse:
+    build:
+      context: .
+      target: prod
+      args:
+        # PROJECT_PATH is a build-time ARG: it sets where the code + venv live in
+        # the image (WORKDIR). It must be a build arg to take effect.
+        - PROJECT_PATH=/project/nccu-moodle-mcp
+    image: nccu-moodle-mcp:latest
+    container_name: nccu-moodle-mcp
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-3033}:3033"
+    environment:
+      - PROJECT_PATH=/project/nccu-moodle-mcp
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3033
+      # Host header check (DNS-rebinding guard). Defaults to "*" = allow any host,
+      # so the server accepts requests from any domain/IP out of the box. To lock
+      # it down instead, set MCP_ALLOWED_HOSTS to specific hostnames (include the
+      # port if clients send one, e.g. "1.2.3.4:3033").
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-*}
+    healthcheck:
+      # TCP-level check only, so it is unaffected by MCP_ALLOWED_HOSTS.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 3033), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

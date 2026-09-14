@@ -1,7 +1,7 @@
 [project]
 name = "nccu-moodle-mcp"
 version = "0.1.0"
-description = "MCP server exposing NCCU Moodle (moodle45.nccu.edu.tw) via SSO login"
+description = "MCP server exposing NCCU Moodle (moodle.nccu.edu.tw) via SSO login"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

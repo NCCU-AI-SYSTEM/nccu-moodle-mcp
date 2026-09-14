@@ -1,6 +1,6 @@
 # NCCU Moodle MCP
 
-An MCP server that accesses **NCCU Moodle** (`moodle45.nccu.edu.tw`) on behalf of a
+An MCP server that accesses **NCCU Moodle** (`moodle.nccu.edu.tw`) on behalf of a
 student. It logs in through the NCCU single-sign-on portal (`i.nccu.edu.tw`) and
 exposes Moodle data as MCP tools.
 
@@ -24,8 +24,15 @@ side.
 Course data comes from Moodle's **mobile Web Services API**, not HTML scraping:
 after SSO login, the server obtains a Web Services token the way the Moodle app
 does (`admin/tool/mobile/launch.php` → `moodlemobile://token=…`) and calls the
-REST API (`core_enrol_get_users_courses`). Semester is the NCCU term code encoded
-in each course's short name (e.g. `1151`).
+REST API. Semester is the NCCU term code encoded in each course's short name
+(e.g. `1151`).
+
+**Nothing about the Moodle instance is hardcoded.** On startup the server fetches
+Moodle's login page (via the stable entry `moodle.nccu.edu.tw`) and discovers both
+the current backend host (e.g. `moodle45.nccu.edu.tw`) and the NCCU SSO login URL
+(which encodes the `MoodleSSOxx.aspx` path) — so if the school moves to a different
+instance number, it keeps working. The discovered values are cached in memory for
+the process (site-wide config, not per-user state).
 
 ---
 
@@ -38,7 +45,7 @@ connects as themselves.
 
 **Before you start, get these three things:**
 
-1. The **server address** from the operator — e.g. `http://140.119.x.x:8000/mcp`
+1. The **server address** from the operator — e.g. `http://140.119.x.x:3033/mcp`
    or `https://moodle-mcp.example.com/mcp`.
 2. Your **NCCU student ID** (e.g. `112703016`).
 3. Your **NCCU portal password** (the one you use at <https://i.nccu.edu.tw>).
@@ -172,24 +179,25 @@ uv sync          # creates .venv and installs from uv.lock
 ### 2. Run as an HTTP server
 
 ```bash
-MCP_HOST=0.0.0.0 \
-MCP_PORT=8000 \
-MCP_ALLOWED_HOSTS="moodle-mcp.example.com" \
-uv run nccu-moodle-mcp http
+MCP_HOST=0.0.0.0 uv run nccu-moodle-mcp http
 ```
 
-Endpoint: `http://<host>:8000/mcp` (Streamable HTTP, stateless, JSON responses).
+Endpoint: `http://<host>:3033/mcp` (Streamable HTTP, stateless, JSON responses).
+On startup it discovers + caches the Moodle backend and SSO URL, then serves.
 
 Environment variables:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `MCP_HOST` | `127.0.0.1` | Bind address. Set `0.0.0.0` to accept remote connections. |
-| `MCP_PORT` | `8000` | Port. |
-| `MCP_ALLOWED_HOSTS` | *(localhost only)* | Comma-separated hostnames allowed in the `Host` header (DNS-rebinding protection). Set to your public domain. Use `*` to disable the check **only** behind a trusted reverse proxy. |
+| `MCP_PORT` | `3033` | Port. |
+| `MCP_ALLOWED_HOSTS` | `*` (any host) | Hostnames allowed in the `Host` header (DNS-rebinding guard). Default `*` accepts any host. To lock down, set specific hostnames (comma-separated) — include the port if clients send one (e.g. `1.2.3.4:3033`). |
+| `MOODLE_SSO_URL` | *(auto-discovered)* | The NCCU SSO login URL (`i.nccu.edu.tw/Login.aspx?...`). Normally found automatically from Moodle's login page; set this to skip discovery or pin it. |
 
-> DNS-rebinding protection is on by default. If `MCP_ALLOWED_HOSTS` doesn't
-> include the host clients use, requests are rejected with **HTTP 421**.
+> The host check defaults to allowing **any** host. If you set
+> `MCP_ALLOWED_HOSTS` to specific names, a request whose `Host` isn't listed is
+> rejected with **HTTP 421** — the value must match the `Host` header exactly,
+> **including the port** when one is present.
 
 ### 3. Put it behind HTTPS (recommended)
 
@@ -198,23 +206,38 @@ Caddy config:
 
 ```
 moodle-mcp.example.com {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:3033
 }
 ```
 
-Run the app bound to localhost with the public host allowed:
+Run the app bound to localhost, optionally locking the host to your domain:
 
 ```bash
 MCP_ALLOWED_HOSTS="moodle-mcp.example.com" uv run nccu-moodle-mcp http
 ```
 
-(With nginx/other proxies you can instead set `MCP_ALLOWED_HOSTS="*"` since the
-proxy is the only client the app sees — but only if the app port is not otherwise
-reachable.)
+(You can also leave `MCP_ALLOWED_HOSTS` at its default `*` when the app port is
+only reachable through the proxy.)
 
 ### 4. Keep it running
 
-Run under a process manager (systemd, pm2, Docker, …). Minimal systemd unit:
+**Docker Compose (recommended).** The repo ships a `Dockerfile` (multi-stage,
+uv-based) and `docker-compose.yml` (service `nccucourse`, bind `0.0.0.0:3033`,
+`MCP_ALLOWED_HOSTS=*`, restart policy, healthcheck):
+
+```bash
+docker compose up -d --build     # build and start
+docker compose logs -f           # watch
+docker compose down              # stop
+```
+
+Override settings via a local `.env` or the shell, e.g. to lock the host down:
+
+```bash
+MCP_ALLOWED_HOSTS=moodle-mcp.example.com docker compose up -d
+```
+
+**systemd (bare-metal alternative):**
 
 ```ini
 [Unit]
@@ -223,9 +246,9 @@ After=network.target
 
 [Service]
 WorkingDirectory=/path/to/moodle_mcp
-Environment=MCP_HOST=127.0.0.1
-Environment=MCP_ALLOWED_HOSTS=moodle-mcp.example.com
-ExecStart=/path/to/uv run nccu-moodle-mcp http
+Environment=MCP_HOST=0.0.0.0
+Environment=MCP_PORT=3033
+ExecStart=/usr/local/bin/uv run nccu-moodle-mcp http
 Restart=always
 
 [Install]
@@ -247,8 +270,11 @@ curl -s https://moodle-mcp.example.com/mcp -X POST \
 
 | File | Purpose |
 |------|---------|
-| `server.py` | MCP server (stdio + HTTP), tool definitions |
-| `moodle_client.py` | `MoodleClient`: stateless SSO login + `list_courses` |
+| `server.py` | MCP server (stdio + HTTP), the 5 tool definitions, startup discovery warm-up |
+| `moodle_client.py` | `MoodleClient`: stateless SSO login, site auto-discovery, and all Web-Services tools |
 | `client.py` | Minimal HTTP client for testing (plain `requests`) |
 | `pyproject.toml` | Project metadata, dependencies, `nccu-moodle-mcp` entry point |
 | `uv.lock` | Pinned dependency lockfile (committed) |
+| `Dockerfile` | Multi-stage uv build; `prod` target runs the HTTP server |
+| `docker-compose.yml` | Service `nccucourse` — build + run on port 3033 with a healthcheck |
+| `.dockerignore` | Keeps `.venv`, secrets, caches out of the build context |

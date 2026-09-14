@@ -18,10 +18,11 @@ of them rather than logging in per function.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -64,11 +65,15 @@ def _select_by_sem(items: list[dict], sem: str | None, term_key: str = "semester
         return list(items)
     return [it for it in items if (it.get(term_key) or "").lower() == want]
 
-PORTAL = "https://i.nccu.edu.tw"
-LOGIN_URL = f"{PORTAL}/Login.aspx?ReturnUrl=%2fsso_app%2fMoodleSSO45.aspx"
-SSO_APP_URL = f"{PORTAL}/sso_app/MoodleSSO45.aspx"
-ALLOW_SUBMIT_URL = f"{PORTAL}/SSOService.asmx/AllowSubmit"
-MOODLE = "https://moodle45.nccu.edu.tw"
+# Stable entry host. It 303-redirects to the current backend instance
+# (moodle45 today, maybe a different number later) — we never hardcode that.
+MOODLE = "https://moodle.nccu.edu.tw"
+
+# Site-wide config discovered once and cached in memory (NOT user data): the NCCU
+# SSO login URL (which encodes the MoodleSSOxx.aspx path) and the resolved Moodle
+# backend base. Discovered from Moodle's own login page so nothing is hardcoded.
+_SSO_LOGIN_URL: str | None = None
+_MOODLE_BASE: str | None = None
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -91,6 +96,57 @@ class MoodleAuthError(RuntimeError):
 
 def _inputs(scope) -> dict[str, str]:
     return {i.get("name"): i.get("value", "") for i in scope.find_all("input") if i.get("name")}
+
+
+def _discover_site(session: requests.Session) -> tuple[str, str]:
+    """Return (sso_login_url, moodle_base), discovering them once and caching in
+    memory. On first call it fetches Moodle's English login page and reads the
+    "NCCU faculty and students" button (a.inccu-button pointing at i.nccu.edu.tw)
+    for the SSO login URL, and the page's final URL for the backend base — so the
+    MoodleSSOxx.aspx version and the moodleNN host are never hardcoded.
+
+    MOODLE_SSO_URL overrides the SSO login URL (and skips the discovery fetch for
+    it). This is site-wide config, not per-user state.
+    """
+    global _SSO_LOGIN_URL, _MOODLE_BASE
+    env = os.environ.get("MOODLE_SSO_URL", "").strip()
+    if env:
+        _SSO_LOGIN_URL = env
+    if _SSO_LOGIN_URL and _MOODLE_BASE:
+        return _SSO_LOGIN_URL, _MOODLE_BASE
+
+    r = session.get(MOODLE + "/?lang=en", allow_redirects=True, timeout=15)
+    p = urlsplit(r.url)
+    if p.scheme and p.netloc:
+        _MOODLE_BASE = f"{p.scheme}://{p.netloc}"
+    if not _SSO_LOGIN_URL:
+        soup = BeautifulSoup(r.text, "html.parser")
+        for a in soup.select("a.inccu-button, a.btn-login"):
+            href = a.get("href", "")
+            if "Login.aspx" in href and "i.nccu.edu.tw" in href:
+                _SSO_LOGIN_URL = href
+                break
+    if not _SSO_LOGIN_URL:
+        raise MoodleAuthError(
+            "Could not find the NCCU SSO login link on Moodle's login page; "
+            "set MOODLE_SSO_URL to the i.nccu.edu.tw Login.aspx URL."
+        )
+    return _SSO_LOGIN_URL, (_MOODLE_BASE or MOODLE)
+
+
+def prewarm() -> tuple[str, str] | None:
+    """Eagerly discover and cache the SSO login URL + Moodle base, so the first
+    real login doesn't pay the discovery cost. Best-effort: on failure the cache
+    stays empty and discovery falls back to lazy (on first login). Safe to call
+    at server startup."""
+    s = requests.Session()
+    s.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+    try:
+        return _discover_site(s)
+    except Exception:
+        return None
+    finally:
+        s.close()
 
 
 @dataclass
@@ -117,8 +173,18 @@ class MoodleClient:
         s = requests.Session()
         s.headers.update({"User-Agent": user_agent, "Accept-Language": "en-US,en;q=0.9"})
 
+        # 0. Discover (once, cached) the SSO login URL and the Moodle backend base
+        #    from Moodle's login page, so neither the MoodleSSOxx.aspx version nor
+        #    the moodleNN host is hardcoded.
+        login_url, base = _discover_site(s)
+        p = urlsplit(login_url)
+        portal = f"{p.scheme}://{p.netloc}"                       # https://i.nccu.edu.tw
+        return_path = unquote((parse_qs(p.query).get("ReturnUrl") or [""])[0])
+        sso_app_url = portal + return_path if return_path.startswith("/") else login_url
+        allow_submit_url = f"{portal}/SSOService.asmx/AllowSubmit"
+
         # 1. GET login form -> ASP.NET hidden state.
-        r = s.get(LOGIN_URL)
+        r = s.get(login_url)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         if not soup.select_one("#captcha_Login1_UserName"):
@@ -131,16 +197,16 @@ class MoodleClient:
         payload["captcha$Login1$Password"] = password
         payload["__EVENTTARGET"] = "captcha$Login1$LoginButton"
         payload["__EVENTARGUMENT"] = ""
-        r = s.post(LOGIN_URL, data=payload,
-                   headers={"Origin": PORTAL, "Referer": LOGIN_URL}, allow_redirects=True)
+        r = s.post(login_url, data=payload,
+                   headers={"Origin": portal, "Referer": login_url}, allow_redirects=True)
         # The auth ticket (.LDAPAUTH) is issued only on success. If it's absent,
         # the login was rejected — fail here, immediately, before the token/WS steps.
         if not any(c.name == ".LDAPAUTH" for c in s.cookies):
             raise MoodleAuthError("Incorrect username or password.")
 
         # 3. Land on the SSO app page and parse its handoff form (one-time token).
-        if "MoodleSSO45.aspx" not in r.url:
-            r = s.get(SSO_APP_URL, headers={"Referer": LOGIN_URL})
+        if sso_app_url.rsplit("/", 1)[-1].split("?")[0] not in r.url:
+            r = s.get(sso_app_url, headers={"Referer": login_url})
         soup = BeautifulSoup(r.text, "html.parser")
         form = soup.find("form")
         if form is None:
@@ -150,24 +216,26 @@ class MoodleClient:
 
         # 4. Clear the anti double-submit guard the page's JS waits on.
         try:
-            s.post(ALLOW_SUBMIT_URL, json={},
+            s.post(allow_submit_url, json={},
                    headers={"X-Requested-With": "XMLHttpRequest",
                             "Content-Type": "application/json; charset=UTF-8",
-                            "Origin": PORTAL, "Referer": SSO_APP_URL})
+                            "Origin": portal, "Referer": sso_app_url})
         except requests.RequestException:
             pass  # non-fatal; handoff below is what matters
 
-        # 5. Hand off to Moodle. The SSO form posts to itself, so the real
-        #    target is moodle45/login.php carrying the SSO token.
+        # 5. Hand off to Moodle. The SSO form posts to itself, so the real target
+        #    is <base>/login.php carrying the SSO token. `base` is the resolved
+        #    backend (from discovery), so this POST goes there directly and a
+        #    cross-host 303 can't turn it into a GET and strip the token.
         if not action or action.split("?")[0].rstrip("/") == r.url.split("?")[0].rstrip("/"):
-            action = f"{MOODLE}/login.php"
+            action = f"{base}/login.php"
         r = s.post(action, data=fields,
-                   headers={"Origin": PORTAL, "Referer": SSO_APP_URL}, allow_redirects=True)
+                   headers={"Origin": portal, "Referer": sso_app_url}, allow_redirects=True)
         msid = s.cookies.get("MoodleSession")
         if not msid:
             raise MoodleAuthError("SSO handoff failed: no MoodleSession cookie issued.")
 
-        client = cls(username=username, session=s, moodle_session_id=msid)
+        client = cls(username=username, session=s, moodle_session_id=msid, base_url=base)
         client._hydrate(r.text)  # pick up fullname + sesskey from the landing page
         return client
 

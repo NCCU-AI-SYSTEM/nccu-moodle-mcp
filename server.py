@@ -1,7 +1,7 @@
 """
 NCCU Moodle MCP server.
 
-Exposes NCCU Moodle (moodle45.nccu.edu.tw) over the Model Context Protocol.
+Exposes NCCU Moodle (moodle.nccu.edu.tw) over the Model Context Protocol.
 Every tool is multi-tenant and stateless: the caller passes their NCCU portal
 credentials, the server performs the full i.nccu.edu.tw SSO handoff for that one
 call, uses the resulting session, and discards it when the call returns. No
@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from moodle_client import MoodleClient, MoodleAuthError
+from moodle_client import MoodleClient, MoodleAuthError, prewarm
 
 # Reusable, richly-described parameter types (surface as JSON Schema constraints).
 Sem = Annotated[
@@ -60,7 +60,7 @@ mcp = MCPServer(
     name="nccu-moodle",
     title="NCCU Moodle",
     description=(
-        "Access NCCU Moodle (moodle45.nccu.edu.tw) on behalf of a student. "
+        "Access NCCU Moodle (moodle.nccu.edu.tw) on behalf of a student. "
         "Each tool logs in through the NCCU single-sign-on portal "
         "(i.nccu.edu.tw) using the credentials passed to it, so every call is "
         "independent and stateless — nothing is stored between calls."
@@ -204,7 +204,7 @@ def main() -> None:
     """Console entry point. `nccu-moodle-mcp [http]` or `uv run nccu-moodle-mcp`.
 
       (no arg)  -> stdio  (for Claude Desktop / Code as a local server)
-      http      -> Streamable HTTP on 127.0.0.1:8000/mcp
+      http      -> Streamable HTTP on 127.0.0.1:3033/mcp
     Env overrides: MCP_TRANSPORT, MCP_HOST, MCP_PORT, MCP_ALLOWED_HOSTS
     """
     import os
@@ -215,13 +215,11 @@ def main() -> None:
     if transport in ("http", "streamable-http"):
         from mcp.server.transport_security import TransportSecuritySettings
 
-        # When the server is reached through a domain / another host, Streamable
-        # HTTP's DNS-rebinding protection rejects the request unless the Host is
-        # allowed. Configure via MCP_ALLOWED_HOSTS:
-        #   unset            -> localhost only (default, safe for local use)
-        #   "example.com"    -> allow that host (comma-separate for several)
-        #   "*"              -> disable the check (use only behind a trusted proxy)
-        allowed = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
+        # Streamable HTTP's DNS-rebinding protection rejects requests whose Host
+        # header isn't allowed. Configure via MCP_ALLOWED_HOSTS:
+        #   unset / "*"      -> allow ANY host (default; disables the check)
+        #   "example.com"    -> allow that host only (comma-separate for several)
+        allowed = (os.environ.get("MCP_ALLOWED_HOSTS") or "*").strip()
         security = None
         if allowed == "*":
             security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
@@ -232,10 +230,17 @@ def main() -> None:
                 allowed_origins=["*"],
             )
 
+        # Eagerly discover + cache the SSO login URL and Moodle backend base now,
+        # so the first user request doesn't pay the discovery latency (best-effort;
+        # falls back to lazy discovery on first login if it fails).
+        warmed = prewarm()
+        print(f"[startup] site discovery: {'ok ' + warmed[1] if warmed else 'deferred (will retry on first login)'}",
+              file=sys.stderr)
+
         mcp.run(
             transport="streamable-http",
             host=os.environ.get("MCP_HOST", "127.0.0.1"),  # set 0.0.0.0 to expose
-            port=int(os.environ.get("MCP_PORT", "8000")),
+            port=int(os.environ.get("MCP_PORT", "3033")),
             streamable_http_path="/mcp",
             json_response=True,     # plain JSON responses (easy to curl), not SSE
             stateless_http=True,    # each request independent -> no session handshake
