@@ -459,14 +459,18 @@ class MoodleClient:
             })
         return sections
 
-    def get_announcements(self, course_id: int | None = None, limit: int = 10) -> list[dict]:
-        """Course announcements — posts in the "Announcements" (news) forum — via
-        mod_forum_get_forums_by_courses + mod_forum_get_forum_discussions.
+    def list_announcements(self, course_id: int | None = None,
+                           limit: int = 10, offset: int = 0) -> list[dict]:
+        """List announcement *tiles* (no message body) from the "Announcements"
+        (news) forum — like the forum landing page. Open one with
+        get_announcement(discussion_id).
 
         course_id : one course; if omitted, aggregates across the latest
                     semester's courses.
-        Returns newest-first: {course_id, course, subject, author, posted,
-        message, replies, url}, capped at `limit`.
+        limit/offset : paginate the newest-first tile list.
+
+        Each tile: {discussion_id, course_id, course, subject, author, posted,
+        replies, pinned, url}.
         """
         if course_id:
             course_ids, names = [course_id], {}
@@ -480,25 +484,52 @@ class MoodleClient:
         params = {f"courseids[{i}]": cid for i, cid in enumerate(course_ids)}
         forums = self.ws("mod_forum_get_forums_by_courses", **params)
 
-        out = []
+        tiles = []
         for fo in forums:
             if fo.get("type") != "news":           # the Announcements forum
                 continue
             cid = fo.get("course")
             disc = self.ws("mod_forum_get_forum_discussions", forumid=fo["id"])
             for d in disc.get("discussions", []):
-                out.append({
+                tiles.append({
+                    "discussion_id": d.get("discussion"),
                     "course_id": cid,
                     "course": names.get(cid, ""),
                     "subject": d.get("subject") or d.get("name"),
                     "author": (d.get("userfullname") or "").strip(),
                     "posted": _ts(d.get("created")),
-                    "message": _text(d.get("message")),
                     "replies": d.get("numreplies"),
+                    "pinned": bool(d.get("pinned")),
                     "url": self.url(f"/mod/forum/discuss.php?d={d.get('discussion')}"),
                 })
-        out.sort(key=lambda x: x["posted"] or "", reverse=True)
-        return out[:limit]
+        tiles.sort(key=lambda t: t["posted"] or "", reverse=True)
+        return tiles[offset:offset + limit]
+
+    def get_announcement(self, discussion_id: int,
+                         limit: int = 20, offset: int = 0) -> dict:
+        """Open one announcement: its thread of posts (the original post + any
+        replies), via mod_forum_get_discussion_posts. Ordered oldest-first and
+        paginated with limit/offset.
+
+        Returns {discussion_id, total, posts:[{post_id, parent_id, subject,
+        author, posted, message}]}.
+        """
+        data = self.ws("mod_forum_get_discussion_posts", discussionid=discussion_id)
+        posts = data.get("posts", [])
+        posts.sort(key=lambda p: p.get("timecreated") or 0)  # thread order
+        out = []
+        for p in posts[offset:offset + limit]:
+            au = p.get("author") or {}
+            author = au.get("fullname") if isinstance(au, dict) else au
+            out.append({
+                "post_id": p.get("id"),
+                "parent_id": p.get("parentid"),
+                "subject": p.get("subject"),
+                "author": (author or "").strip(),
+                "posted": _ts(p.get("timecreated")),
+                "message": _text(p.get("message")),
+            })
+        return {"discussion_id": discussion_id, "total": len(posts), "posts": out}
 
     def get_notifications(self, limit: int = 10) -> list[dict]:
         """The user's notifications (the app's notification bell), via

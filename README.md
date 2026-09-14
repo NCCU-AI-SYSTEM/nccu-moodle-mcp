@@ -20,7 +20,8 @@ side.
 | `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
 | `get_course_contents` | Sections and activities/resources of one course (`course_id`). | `core_course_get_contents` |
-| `get_announcements` | Announcements (news-forum posts); one course or all current-semester courses. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
+| `list_announcements` | Announcement tiles (headers only) for one course or all current-semester courses; paginated. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
+| `get_announcement` | Read one announcement's thread (posts + replies) by `discussion_id`; paginated. | `mod_forum_get_discussion_posts` |
 | `get_notifications` | The notification bell (due reminders, grading, forum posts); reports unread count. | `message_popup_get_popup_notifications` |
 
 Course data comes from Moodle's **mobile Web Services API**, not HTML scraping:
@@ -133,12 +134,14 @@ be available to the assistant.
 
 Ask the assistant, for example:
 
-> *List my Moodle courses this semester.*
-> *List all my Moodle courses.*  (→ every semester)
-> *What courses did I take in 1142?*
+> *List my Moodle courses this semester.*  ·  *List all my Moodle courses.*
+> *What's due in the next two weeks?*  ·  *Any assignments in 1142?*
+> *What are the latest announcements?*  ·  *Open that announcement and read it.*
+> *What are my grades in course 18284?*  ·  *Do I have any notifications?*
 
-It calls `list_courses` and reads your credentials from the headers you set — so
-you never type your password into the chat, and **the assistant never sees or
+The assistant picks the right tool and reads your credentials from the headers
+you set — so you never type your password into the chat, and **the assistant
+never sees or
 handles your password** (the tool has no username/password parameters).
 
 ---

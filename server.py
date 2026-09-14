@@ -201,29 +201,53 @@ def get_course_contents(ctx: Context, course_id: CourseId) -> dict:
 
 
 @mcp.tool(
-    name="get_announcements",
-    title="Get course announcements",
+    name="list_announcements",
+    title="List announcements",
     description=(
-        "Get course announcements — posts in a course's \"Announcements\" (news) "
-        "forum.\n\n"
-        "If `course_id` is given, returns that course's announcements; otherwise "
-        "aggregates across the current (latest) semester's courses. `limit` caps "
-        "the number returned (newest first).\n\n"
-        "Each announcement: {course_id, course, subject, author, posted, message, "
-        "replies, url}. `posted` is Taipei time 'YYYY-MM-DD HH:MM'.\n\n"
+        "List announcement TILES (headers only, no message body) from a course's "
+        "\"Announcements\" forum — like scanning the forum page. To read one, take "
+        "its `discussion_id` and call get_announcement.\n\n"
+        "If `course_id` is given, lists that course's announcements; otherwise "
+        "aggregates across the current (latest) semester's courses. `limit`/"
+        "`offset` paginate the newest-first list.\n\n"
+        "Each tile: {discussion_id, course_id, course, subject, author, posted, "
+        "replies, pinned, url}. `posted` is Taipei time 'YYYY-MM-DD HH:MM'.\n\n"
         "Credentials come from the MCP settings headers, not from you."
     ),
 )
-def get_announcements(
+def list_announcements(
     ctx: Context,
     course_id: Annotated[int | None, Field(
         description="Moodle course id (from list_courses). Omit to cover all "
                     "current-semester courses.")] = None,
-    limit: Annotated[int, Field(ge=1, le=50, description="Max announcements to return.")] = 10,
+    limit: Annotated[int, Field(ge=1, le=50, description="Max tiles to return.")] = 10,
+    offset: Annotated[int, Field(ge=0, description="Skip this many (for paging).")] = 0,
 ) -> dict:
-    """Course announcements (news forum). Omit `course_id` for all current courses."""
-    items = _run(ctx, lambda m: m.get_announcements(course_id=course_id, limit=limit))
-    return {"count": len(items), "announcements": items}
+    """List announcement tiles. Omit `course_id` for all current courses; page with limit/offset."""
+    items = _run(ctx, lambda m: m.list_announcements(course_id=course_id, limit=limit, offset=offset))
+    return {"count": len(items), "offset": offset, "announcements": items}
+
+
+@mcp.tool(
+    name="get_announcement",
+    title="Read an announcement",
+    description=(
+        "Open ONE announcement and read its thread — the original post plus any "
+        "replies — given a `discussion_id` from list_announcements.\n\n"
+        "Posts are oldest-first; `limit`/`offset` paginate long threads.\n\n"
+        "Returns {discussion_id, total, posts:[{post_id, parent_id, subject, "
+        "author, posted, message}]}. `posted` is Taipei time 'YYYY-MM-DD HH:MM'.\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def get_announcement(
+    ctx: Context,
+    discussion_id: Annotated[int, Field(description="Discussion id from list_announcements.")],
+    limit: Annotated[int, Field(ge=1, le=100, description="Max posts to return.")] = 20,
+    offset: Annotated[int, Field(ge=0, description="Skip this many posts (for paging).")] = 0,
+) -> dict:
+    """Read one announcement's thread. `discussion_id` from list_announcements."""
+    return _run(ctx, lambda m: m.get_announcement(discussion_id, limit=limit, offset=offset))
 
 
 @mcp.tool(
