@@ -20,6 +20,31 @@ def _author_name(author) -> str:
     return (author or "").strip()
 
 
+def forum_discussions(
+    client, forum_id: int, course_id: int | None = None, course_name: str = ""
+) -> list[dict]:
+    """Discussion TILES for one forum via mod_forum_get_forum_discussions, newest
+    first. Each tile: {discussion_id, course_id, course, subject, author, posted,
+    replies, pinned, url}. Shared by list_announcements and get_module(forum)."""
+    disc = client.ws("mod_forum_get_forum_discussions", forumid=forum_id)
+    tiles = [
+        {
+            "discussion_id": d.get("discussion"),
+            "course_id": course_id,
+            "course": course_name,
+            "subject": d.get("subject") or d.get("name"),
+            "author": _author_name(d.get("userfullname")),
+            "posted": fmt_time(d.get("created")),
+            "replies": d.get("numreplies"),
+            "pinned": bool(d.get("pinned")),
+            "url": client.url(f"/mod/forum/discuss.php?d={d.get('discussion')}"),
+        }
+        for d in disc.get("discussions", [])
+    ]
+    tiles.sort(key=lambda t: t["posted"] or "", reverse=True)
+    return tiles
+
+
 def list_announcements(
     client, course_id: int | None = None, limit: int = 10, offset: int = 0
 ) -> list[dict]:
@@ -48,21 +73,7 @@ def list_announcements(
         if fo.get("type") != "news":  # the Announcements forum
             continue
         cid = fo.get("course")
-        disc = client.ws("mod_forum_get_forum_discussions", forumid=fo["id"])
-        for d in disc.get("discussions", []):
-            tiles.append(
-                {
-                    "discussion_id": d.get("discussion"),
-                    "course_id": cid,
-                    "course": names.get(cid, ""),
-                    "subject": d.get("subject") or d.get("name"),
-                    "author": _author_name(d.get("userfullname")),
-                    "posted": fmt_time(d.get("created")),
-                    "replies": d.get("numreplies"),
-                    "pinned": bool(d.get("pinned")),
-                    "url": client.url(f"/mod/forum/discuss.php?d={d.get('discussion')}"),
-                }
-            )
+        tiles.extend(forum_discussions(client, fo["id"], cid, names.get(cid, "")))
     tiles.sort(key=lambda t: t["posted"] or "", reverse=True)
     return tiles[offset : offset + limit]
 

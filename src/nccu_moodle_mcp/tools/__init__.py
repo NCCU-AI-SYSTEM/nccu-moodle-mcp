@@ -9,5 +9,6 @@ from . import (  # noqa: F401 -- imported for their @mcp.tool registration side 
     courses,
     deadlines,
     grades,
+    module,
     notifications,
 )
