@@ -19,7 +19,7 @@ side.
 | `list_assignments` | Assignments with due dates **and submission status** ('graded' / 'submitted' / 'not submitted'); scope by `sem`, `course_ids`, and/or date ranges on the **due** (`due_from`/`due_to`) or **open** (`opens_from`/`opens_to`) date. | `mod_assign_get_assignments` + `mod_assign_get_submission_status` (per assignment, ≤5 in parallel) |
 | `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
-| `get_course_contents` | Sections and activities/resources of one course (`course_id`). | `core_course_get_contents` |
+| `get_course_contents` | Everything the teacher posted in a course (`course_id`), grouped by week/section; empty weeks hidden unless `include_empty`. | `core_course_get_contents` |
 | `list_announcements` | Announcement tiles (headers only) for one course or all current-semester courses; paginated. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
 | `get_announcement` | Read one announcement's thread (posts + replies) by `discussion_id`; paginated. | `mod_forum_get_discussion_posts` |
 | `get_notifications` | The notification bell (due reminders, grading, forum posts); reports unread count. | `message_popup_get_popup_notifications` |
