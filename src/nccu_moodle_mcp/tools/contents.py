@@ -17,9 +17,10 @@ def get_course_contents(client, course_id: int, include_empty: bool = False) -> 
     {section, summary, modules:[{name, type, url}]}, where `type` is the Moodle
     module (assign, resource, url, forum, quiz, page, folder, label, …).
 
-    include_empty: by default, sections with no items are dropped (so you see
-    only the weeks the teacher actually posted in). Set True for the full
-    week-by-week skeleton including empty weeks.
+    include_empty: by default, a section is dropped only when it has NO items
+    AND NO summary text — so weeks where the teacher wrote only a summary (e.g.
+    the week's readings/plan, common at NCCU) are kept. Set True for the full
+    week-by-week skeleton including truly empty weeks.
     """
     data = client.ws("core_course_get_contents", courseid=course_id)
     sections = []
@@ -34,13 +35,14 @@ def get_course_contents(client, course_id: int, include_empty: bool = False) -> 
             }
             for mod in s.get("modules", [])
         ]
-        if not modules and not include_empty:
+        summary = strip_html(s.get("summary"))
+        if not modules and not summary and not include_empty:
             continue
         sections.append(
             {
                 "section_id": s.get("id"),
                 "section": s.get("name"),
-                "summary": strip_html(s.get("summary")),
+                "summary": summary,
                 "modules": modules,
             }
         )
@@ -55,8 +57,11 @@ def get_course_contents(client, course_id: int, include_empty: bool = False) -> 
         "from list_courses), grouped by section — NCCU names sections by week, so "
         "this is the week-by-week list of materials, links, forums and "
         "assignments.\n\n"
-        "By default only sections that contain items are returned; set "
-        "`include_empty` true for the full week skeleton (including empty weeks).\n\n"
+        "The `summary` is the teacher's text for that section/week (readings, "
+        "plan, notes) — many NCCU weeks have only a summary and no attached items. "
+        "By default a section is shown if it has items OR a summary; only truly "
+        "blank sections are dropped. Set `include_empty` true for the full week "
+        "skeleton including blank weeks.\n\n"
         "Each section: {section_id, section, summary, modules:[{id, instance, "
         "name, type, url}]}. `type` is the Moodle module (assign, resource, url, "
         "forum, quiz, page, folder, label, …); `id` is the course-module id (cmid) "
@@ -70,7 +75,7 @@ def _get_course_contents(
     ctx: Context,
     course_id: CourseId,
     include_empty: Annotated[
-        bool, Field(description="Include sections/weeks with no items.")
+        bool, Field(description="Include truly blank sections (no items and no summary).")
     ] = False,
 ) -> dict:
     sections = run_tool(
