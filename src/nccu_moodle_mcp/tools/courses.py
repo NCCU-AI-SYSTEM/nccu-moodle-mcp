@@ -3,7 +3,10 @@ role in a single course."""
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from mcp.server.mcpserver import Context
+from pydantic import Field
 
 from ..app import CourseId, Sem, mcp, run_tool
 from ..helpers import select_by_sem, term_code
@@ -59,16 +62,44 @@ def list_courses(client, sem: str | None = None, include_role: bool = False) -> 
     courses = select_by_sem(courses, sem)
     courses.sort(key=lambda c: c["semester"], reverse=True)
 
-    if include_role and courses:
-        uid = client.get_userid()
-        results = client.ws_parallel(
-            "core_enrol_get_enrolled_users",
-            [_enrolled_self_params(c["id"], uid) for c in courses],
-            max_workers=5,
-        )
-        for c, eu in zip(courses, results, strict=True):
-            roles = _roles_from(eu, uid)
-            c["role"] = roles[0] if roles else None
+    if include_role:
+        _attach_roles(client, courses)
+    return courses
+
+
+def _attach_roles(client, courses: list[dict]) -> None:
+    """Add `role` (primary shortname) to each course in place, ≤5 calls in
+    parallel. No-op on an empty list."""
+    if not courses:
+        return
+    uid = client.get_userid()
+    results = client.ws_parallel(
+        "core_enrol_get_enrolled_users",
+        [_enrolled_self_params(c["id"], uid) for c in courses],
+        max_workers=5,
+    )
+    for c, eu in zip(courses, results, strict=True):
+        roles = _roles_from(eu, uid)
+        c["role"] = roles[0] if roles else None
+
+
+def search_courses(client, query: str, sem: str | None = "all") -> list[dict]:
+    """Filter the user's enrolled courses by a free-text keyword — the app's
+    "filter my courses" box. Matches `query` as a case-insensitive substring of
+    the course name (which carries the NCCU code + Chinese + English title, so a
+    course code, a Chinese word or an English word all work).
+
+    sem: which terms to search across; default 'all' (every enrolled course, so
+    a keyword finds a course whatever term it's in). Pass a term code to scope,
+    or None/'latest' for the current term only.
+
+    Returns the same shape as list_courses ({id, name, url, semester, current,
+    role}), newest term first; `role` is attached only to the matches."""
+    q = (query or "").strip().lower()
+    courses = list_courses(client, sem=sem, include_role=False)
+    if q:
+        courses = [c for c in courses if q in c["name"].lower()]
+    _attach_roles(client, courses)
     return courses
 
 
@@ -105,6 +136,43 @@ def get_course_role(client, course_id: int) -> dict:
 def _list_courses(ctx: Context, sem: Sem = None) -> dict:
     items = run_tool(ctx, lambda m: list_courses(m, sem=sem, include_role=True))
     return {"count": len(items), "courses": items}
+
+
+@mcp.tool(
+    name="search_courses",
+    title="Search my courses",
+    description=(
+        "Search the user's enrolled courses by keyword — the Moodle app's "
+        '"filter my courses" box. `query` is matched as a case-insensitive '
+        "substring of each course name, which contains the NCCU term code, the "
+        "Chinese title and the English title — so a course code, a Chinese word "
+        'or an English word all work (e.g. "物件導向", "Object-oriented", '
+        '"703009").\n\n'
+        "Searches ALL enrolled courses across every term by default, so a "
+        "keyword finds the course whatever semester it is in. Pass `sem` as a "
+        'term code (e.g. "1142") to scope the search to one semester, or "latest" '
+        "for the current term only.\n\n"
+        "Returns the same fields as list_courses: {id, name, url, semester, "
+        "current, role}, newest term first. An empty `query` returns everything "
+        "in scope (same as list_courses).\n\n"
+        "Credentials come from the MCP settings headers, not from you."
+    ),
+)
+def _search_courses(
+    ctx: Context,
+    query: Annotated[
+        str, Field(description="Keyword to match against the course name (code / 中文 / English).")
+    ],
+    sem: Annotated[
+        str | None,
+        Field(
+            description="Term to search: 'all' (default, every enrolled course), "
+            "a term code like '1142', or 'latest' for the current term."
+        ),
+    ] = "all",
+) -> dict:
+    items = run_tool(ctx, lambda m: search_courses(m, query, sem=sem))
+    return {"query": query, "count": len(items), "courses": items}
 
 
 @mcp.tool(

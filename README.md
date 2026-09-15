@@ -16,6 +16,7 @@ side.
 | Tool | Description | WS function |
 |------|-------------|-------------|
 | `list_courses` | Enrolled courses by semester, each with the user's **role** (student/teacher/…). No `sem` → latest; `sem="1142"` → that term; `sem="all"` → every course. | `core_enrol_get_users_courses` + `core_enrol_get_enrolled_users` (role, ≤5 parallel) |
+| `search_courses` | Filter enrolled courses by a keyword (the app's "filter my courses" box) — case-insensitive substring of the name (code / 中文 / English). Searches every term by default; `sem` scopes it. | `core_enrol_get_users_courses` + `core_enrol_get_enrolled_users` (role on matches) |
 | `get_course_role` | The user's role in one course (`course_id`): student / teacher / editingteacher / teachingassistant / manager. | `core_enrol_get_enrolled_users` |
 | `list_assignments` | Assignments with due dates, **submission status**, and your **role** per course. Only your *student* courses by default (`include_all_role` to add TA/teacher ones). Scope by `sem`, `course_ids`, and/or **due** (`due_from`/`due_to`) or **open** (`opens_from`/`opens_to`) date ranges. | `mod_assign_get_assignments` + `mod_assign_get_submission_status` + `core_enrol_get_enrolled_users` (≤5 parallel) |
 | `upcoming_deadlines` | Upcoming due dates/quiz closings within `days` (default 14), each with your **role**; student courses only unless `include_all_role`. | `core_calendar_get_action_events_by_timesort` + `core_enrol_get_enrolled_users` |
@@ -285,7 +286,7 @@ src/nccu_moodle_mcp/        the package
 ├── moodle_client.py        MoodleClient: SSO login, site discovery, ws() core
 ├── helpers.py              shared helpers (time / HTML / term-code / semester filter)
 └── tools/                  one module per tool — logic + its own @mcp.tool (+ tool-specific helpers)
-    ├── courses.py          list_courses, get_course_role
+    ├── courses.py          list_courses, search_courses, get_course_role
     ├── assignments.py      list_assignments
     ├── deadlines.py        upcoming_deadlines
     ├── grades.py           get_grades
