@@ -79,6 +79,10 @@ def get_module(client, course_id: int, cmid: int) -> dict:
         out["text"] = strip_html(mod.get("description"))
     elif mtype == "forum":
         out["forum_id"] = instance
+        # A teacher often posts the content in the forum's intro (esp. forums with
+        # no discussion threads). That intro is the module `description` that
+        # core_course_get_contents already returned — no extra request needed.
+        out["intro"] = strip_html(mod.get("description"))
         out["discussions"] = forum_discussions(client, instance, course_id)
     elif mtype == "assign":
         status = client.ws("mod_assign_get_submission_status", assignid=instance)
