@@ -29,6 +29,10 @@ CourseId = Annotated[int, Field(description="Moodle course id (from list_courses
 # Header names clients configure in their MCP settings (the `headers` block).
 USER_HEADER = "X-Moodle-Username"
 PASS_HEADER = "X-Moodle-Password"
+# Relayed by the OAuth gateway instead of user/pass: a Moodle Web Services token
+# and the backend host that issued it (see docs/oauth.md). Preferred when present.
+TOKEN_HEADER = "X-Moodle-Token"
+BASE_HEADER = "X-Moodle-Base"
 
 mcp = MCPServer(
     name="nccu-moodle",
@@ -50,13 +54,17 @@ mcp = MCPServer(
 )
 
 
+def _header(ctx: Context, name: str) -> str | None:
+    headers = ctx.headers or {}
+    return headers.get(name) or headers.get(name.lower())
+
+
 def _resolve_credentials(ctx: Context) -> tuple[str, str]:
     """Read the caller's credentials from the request headers their MCP client
     was configured with. Credentials are never tool arguments, so the calling
     agent/model never sees or handles the user's password."""
-    headers = ctx.headers or {}
-    user = headers.get(USER_HEADER) or headers.get(USER_HEADER.lower())
-    pw = headers.get(PASS_HEADER) or headers.get(PASS_HEADER.lower())
+    user = _header(ctx, USER_HEADER)
+    pw = _header(ctx, PASS_HEADER)
     if not user or not pw:
         raise ToolError(
             "Missing credentials. Configure them in your MCP client settings "
@@ -66,8 +74,30 @@ def _resolve_credentials(ctx: Context) -> tuple[str, str]:
 
 
 def run_tool(ctx: Context, work):
-    """Resolve header credentials, log in (stateless), run `work(client)`, and
-    turn an auth failure into a clean tool error."""
+    """Run `work(client)` against an authenticated Moodle client.
+
+    Two auth paths, token preferred:
+      - OAuth gateway relay: an `X-Moodle-Token` (+ `X-Moodle-Base`) header, from
+        which a token-only client is built with no login round-trip.
+      - Direct: `X-Moodle-Username` / `X-Moodle-Password`, used for a stateless
+        SSO login for this one call.
+    """
+    token = _header(ctx, TOKEN_HEADER)
+    if token:
+        base = _header(ctx, BASE_HEADER) or MoodleClient.base_url
+        try:
+            with MoodleClient.from_token(token, base_url=base) as m:
+                return work(m)
+        except MoodleAuthError as e:
+            # An expired/revoked relayed token can't be re-minted here (SSO needs
+            # the password); tell the caller to re-run the OAuth login.
+            if "invalidtoken" in str(e).lower():
+                raise ToolError(
+                    "Your Moodle session token has expired or was revoked. "
+                    "Please reconnect (sign in again) to refresh it."
+                ) from e
+            raise ToolError(str(e)) from e
+
     user, pw = _resolve_credentials(ctx)
     try:
         with MoodleClient.login(user, pw) as m:

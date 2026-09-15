@@ -215,6 +215,35 @@ class MoodleClient:
         client._hydrate(r.text)  # pick up fullname + sesskey from the landing page
         return client
 
+    @classmethod
+    def from_token(
+        cls,
+        ws_token: str,
+        *,
+        base_url: str = MOODLE,
+        username: str = "",
+        user_agent: str = UA,
+    ) -> MoodleClient:
+        """Build a client from an existing Web Services token — no login.
+
+        The mobile WS token authenticates every WS call on its own (no session
+        cookie), so a token + its backend host is all that's needed to run the
+        WS-based tools. `base_url` must be the host that ISSUED the token (the
+        discovered backend, e.g. https://moodle45.nccu.edu.tw); the token is not
+        accepted against the canonical moodle.nccu.edu.tw host.
+
+        Session-cookie helpers (get/post/is_valid/_hydrate) are unavailable on a
+        token-only client, but the tools use only `ws`/`ws_parallel`/`url`."""
+        s = requests.Session()
+        s.headers.update({"User-Agent": user_agent, "Accept-Language": "en-US,en;q=0.9"})
+        return cls(
+            username=username,
+            session=s,
+            moodle_session_id="",
+            base_url=base_url,
+            ws_token=ws_token,
+        )
+
     # ---- session-scoped helpers (pass `self` down to your functions) ----- #
     def url(self, path: str) -> str:
         return path if path.startswith("http") else urljoin(self.base_url + "/", path.lstrip("/"))
