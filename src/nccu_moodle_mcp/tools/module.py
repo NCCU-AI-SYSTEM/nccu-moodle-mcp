@@ -9,7 +9,7 @@ from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from ..app import mcp, run_tool
-from ..helpers import strip_html
+from ..helpers import browser_file_url, strip_html
 from .announcements import forum_discussions
 from .assignments import assignment_detail
 
@@ -30,7 +30,7 @@ def _files(mod: dict) -> list[dict]:
             "filename": c.get("filename"),
             "mimetype": c.get("mimetype"),
             "size": c.get("filesize"),
-            "url": c.get("fileurl"),
+            "url": browser_file_url(c.get("fileurl")),
         }
         for c in mod.get("contents", [])
         if c.get("type") == "file"

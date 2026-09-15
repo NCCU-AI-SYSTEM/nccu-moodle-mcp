@@ -25,6 +25,16 @@ def strip_html(html: str | None) -> str:
     return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
 
 
+def browser_file_url(url: str | None) -> str | None:
+    """Turn a Web-Services file URL (…/webservice/pluginfile.php/…) into the plain
+    session form (…/pluginfile.php/…). WS responses rewrite file URLs to the
+    /webservice variant, which needs a token; the plain form opens in a
+    logged-in browser (session cookie). Non-pluginfile URLs are unchanged."""
+    if not url:
+        return url
+    return url.replace("/webservice/pluginfile.php", "/pluginfile.php")
+
+
 def term_code(text: str | None) -> str:
     """NCCU term code = the leading 4 digits of a course short/full name (e.g. '1151')."""
     m = re.match(r"\s*(\d{4})", text or "")

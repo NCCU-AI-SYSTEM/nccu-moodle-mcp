@@ -10,7 +10,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from ..app import Sem, mcp, run_tool
-from ..helpers import TAIPEI, fmt_time, select_by_sem, strip_html, term_code
+from ..helpers import TAIPEI, browser_file_url, fmt_time, select_by_sem, strip_html, term_code
 from .courses import _enrolled_self_params, _roles_from
 
 # Feedback fileareas that hold real feedback (exclude editpdf editor assets like
@@ -34,7 +34,11 @@ def _files(items) -> list[dict]:
     """Normalize a list of Moodle file dicts to {filename, size, url} (plain
     Moodle links; browser-authenticated — token download deferred)."""
     return [
-        {"filename": f.get("filename"), "size": f.get("filesize"), "url": f.get("fileurl")}
+        {
+            "filename": f.get("filename"),
+            "size": f.get("filesize"),
+            "url": browser_file_url(f.get("fileurl")),
+        }
         for f in (items or [])
     ]
 
