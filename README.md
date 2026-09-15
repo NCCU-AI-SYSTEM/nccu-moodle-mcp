@@ -18,7 +18,7 @@ side.
 | `list_courses` | Enrolled courses by semester, each with the user's **role** (student/teacher/…). No `sem` → latest; `sem="1142"` → that term; `sem="all"` → every course. | `core_enrol_get_users_courses` + `core_enrol_get_enrolled_users` (role, ≤5 parallel) |
 | `get_course_role` | The user's role in one course (`course_id`): student / teacher / editingteacher / teachingassistant / manager. | `core_enrol_get_enrolled_users` |
 | `list_assignments` | Assignments with due dates, **submission status**, and your **role** per course. Only your *student* courses by default (`include_all_role` to add TA/teacher ones). Scope by `sem`, `course_ids`, and/or **due** (`due_from`/`due_to`) or **open** (`opens_from`/`opens_to`) date ranges. | `mod_assign_get_assignments` + `mod_assign_get_submission_status` + `core_enrol_get_enrolled_users` (≤5 parallel) |
-| `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
+| `upcoming_deadlines` | Upcoming due dates/quiz closings within `days` (default 14), each with your **role**; student courses only unless `include_all_role`. | `core_calendar_get_action_events_by_timesort` + `core_enrol_get_enrolled_users` |
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
 | `get_course_contents` | Everything the teacher posted in a course (`course_id`), grouped by week/section; empty weeks hidden unless `include_empty`. | `core_course_get_contents` |
 | `list_announcements` | Announcement tiles (headers only) for one course or all current-semester courses; paginated. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
