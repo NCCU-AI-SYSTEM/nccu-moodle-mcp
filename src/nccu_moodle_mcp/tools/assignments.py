@@ -11,6 +11,7 @@ from pydantic import Field
 
 from ..app import Sem, mcp, run_tool
 from ..helpers import TAIPEI, fmt_time, select_by_sem, term_code
+from .courses import _enrolled_self_params, _roles_from
 
 
 def _status_from(data: dict) -> str:
@@ -64,7 +65,8 @@ def list_assignments(
     """Assignments via mod_assign_get_assignments. When `course_ids` is given they
     scope the fetch (and `sem` is ignored); otherwise all enrolled courses are
     fetched and filtered by `sem` (default: latest). Returns {id, course_id,
-    course, name, due, opens, cutoff, status, url}, sorted by due date.
+    course, role, name, due, opens, cutoff, status, url}, sorted by due date
+    (`role` is the user's role in that course).
 
     due_from / due_to: keep only assignments whose DUE date is within this range.
     opens_from / opens_to: same, but on the OPEN (submissions-from) date.
@@ -124,6 +126,21 @@ def list_assignments(
     )
     for a, data in zip(out, results, strict=True):
         a["status"] = _status_from(data)
+
+    # The user's role per course (once per distinct course, <=5 in parallel).
+    uid = client.get_userid()
+    seen = list(dict.fromkeys(a["course_id"] for a in out))
+    role_results = client.ws_parallel(
+        "core_enrol_get_enrolled_users",
+        [_enrolled_self_params(cid, uid) for cid in seen],
+        max_workers=5,
+    )
+    roles = {}
+    for cid, eu in zip(seen, role_results, strict=True):
+        got = _roles_from(eu, uid)
+        roles[cid] = got[0] if got else None
+    for a in out:
+        a["role"] = roles.get(a["course_id"])
     return out
 
 
@@ -145,8 +162,10 @@ def list_assignments(
         "for 'due this week', 'opened last week', etc. This is the best way to "
         "answer 'what's due/opened in some period', since it also carries "
         "submission status.\n\n"
-        "Each assignment: {id, course_id, course, name, due, opens, cutoff, "
-        "status, url}, where `status` is 'graded' / 'submitted' / 'not submitted'. "
+        "Each assignment: {id, course_id, course, role, name, due, opens, cutoff, "
+        "status, url}, where `role` is the user's role in that course "
+        "(student/teacher/…) and `status` is 'graded' / 'submitted' / 'not "
+        "submitted'. "
         "Times are Taipei time 'YYYY-MM-DD HH:MM'; null means unset. Sorted by "
         "due date.\n\n"
         "Credentials come from the MCP settings headers, not from you."

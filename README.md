@@ -17,7 +17,7 @@ side.
 |------|-------------|-------------|
 | `list_courses` | Enrolled courses by semester, each with the user's **role** (student/teacher/…). No `sem` → latest; `sem="1142"` → that term; `sem="all"` → every course. | `core_enrol_get_users_courses` + `core_enrol_get_enrolled_users` (role, ≤5 parallel) |
 | `get_course_role` | The user's role in one course (`course_id`): student / teacher / editingteacher / teachingassistant / manager. | `core_enrol_get_enrolled_users` |
-| `list_assignments` | Assignments with due dates **and submission status** ('graded' / 'submitted' / 'not submitted'); scope by `sem`, `course_ids`, and/or date ranges on the **due** (`due_from`/`due_to`) or **open** (`opens_from`/`opens_to`) date. | `mod_assign_get_assignments` + `mod_assign_get_submission_status` (per assignment, ≤5 in parallel) |
+| `list_assignments` | Assignments with due dates, **submission status** ('graded'/'submitted'/'not submitted'), and your **role** in each course; scope by `sem`, `course_ids`, and/or date ranges on the **due** (`due_from`/`due_to`) or **open** (`opens_from`/`opens_to`) date. | `mod_assign_get_assignments` + `mod_assign_get_submission_status` + `core_enrol_get_enrolled_users` (≤5 in parallel) |
 | `upcoming_deadlines` | Upcoming due dates across all courses within `days` (default 14). | `core_calendar_get_action_events_by_timesort` |
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
 | `get_course_contents` | Everything the teacher posted in a course (`course_id`), grouped by week/section; empty weeks hidden unless `include_empty`. | `core_course_get_contents` |
