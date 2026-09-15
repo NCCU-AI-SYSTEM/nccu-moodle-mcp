@@ -61,12 +61,17 @@ def list_assignments(
     due_to: str | None = None,
     opens_from: str | None = None,
     opens_to: str | None = None,
+    include_all_role: bool = False,
 ) -> list[dict]:
     """Assignments via mod_assign_get_assignments. When `course_ids` is given they
     scope the fetch (and `sem` is ignored); otherwise all enrolled courses are
     fetched and filtered by `sem` (default: latest). Returns {id, course_id,
     course, role, name, due, opens, cutoff, status, url}, sorted by due date
     (`role` is the user's role in that course).
+
+    include_all_role: by default (False) only courses where the user is a
+    'student' are kept — your own homework. Set True to include courses where
+    you are a teacher/TA/etc.
 
     due_from / due_to: keep only assignments whose DUE date is within this range.
     opens_from / opens_to: same, but on the OPEN (submissions-from) date.
@@ -117,17 +122,10 @@ def list_assignments(
                 }
             )
     out.sort(key=lambda x: x["due"] or "9999")
-    # Submission status needs one call per assignment (Moodle has no student bulk
-    # call) — run them concurrently, capped at 5 in flight.
-    results = client.ws_parallel(
-        "mod_assign_get_submission_status",
-        [{"assignid": a["id"]} for a in out],
-        max_workers=5,
-    )
-    for a, data in zip(out, results, strict=True):
-        a["status"] = _status_from(data)
 
-    # The user's role per course (once per distinct course, <=5 in parallel).
+    # Resolve the user's role per course first (once per distinct course, <=5 in
+    # parallel), so we can drop non-student courses before the costlier status
+    # calls unless include_all_role is set.
     uid = client.get_userid()
     seen = list(dict.fromkeys(a["course_id"] for a in out))
     role_results = client.ws_parallel(
@@ -141,6 +139,18 @@ def list_assignments(
         roles[cid] = got[0] if got else None
     for a in out:
         a["role"] = roles.get(a["course_id"])
+    if not include_all_role:
+        out = [a for a in out if a["role"] == "student"]
+
+    # Submission status needs one call per assignment (Moodle has no student bulk
+    # call) — run them concurrently, capped at 5 in flight.
+    results = client.ws_parallel(
+        "mod_assign_get_submission_status",
+        [{"assignid": a["id"]} for a in out],
+        max_workers=5,
+    )
+    for a, data in zip(out, results, strict=True):
+        a["status"] = _status_from(data)
     return out
 
 
@@ -162,6 +172,9 @@ def list_assignments(
         "for 'due this week', 'opened last week', etc. This is the best way to "
         "answer 'what's due/opened in some period', since it also carries "
         "submission status.\n\n"
+        "By default only courses where you are a STUDENT are included (your own "
+        "homework); set `include_all_role` true to also include courses where you "
+        "are a teacher/TA.\n\n"
         "Each assignment: {id, course_id, course, role, name, due, opens, cutoff, "
         "status, url}, where `role` is the user's role in that course "
         "(student/teacher/…) and `status` is 'graded' / 'submitted' / 'not "
@@ -197,6 +210,13 @@ def _list_assignments(
         str | None,
         Field(description="Only assignments opening on/before this ISO date (Taipei tz)."),
     ] = None,
+    include_all_role: Annotated[
+        bool,
+        Field(
+            description="Include courses where you are not a student (teacher/TA). "
+            "Default false = only your student courses."
+        ),
+    ] = False,
 ) -> dict:
     items = run_tool(
         ctx,
@@ -208,6 +228,7 @@ def _list_assignments(
             due_to=due_to,
             opens_from=opens_from,
             opens_to=opens_to,
+            include_all_role=include_all_role,
         ),
     )
     return {"count": len(items), "assignments": items}
