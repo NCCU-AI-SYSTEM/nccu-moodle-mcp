@@ -10,8 +10,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from ..app import Sem, mcp, run_tool
-from ..helpers import TAIPEI, fmt_time, select_by_sem, term_code
+from ..helpers import TAIPEI, fmt_time, select_by_sem, strip_html, term_code
 from .courses import _enrolled_self_params, _roles_from
+
+# Feedback fileareas that hold real feedback (exclude editpdf editor assets like
+# `stamps`, `tmp_*`, `pages` which are internal to the annotator).
+_FEEDBACK_FILE_AREAS = {"feedback", "combined"}
 
 
 def _status_from(data: dict) -> str:
@@ -24,6 +28,80 @@ def _status_from(data: dict) -> str:
     if sub.get("status") == "submitted":
         return "submitted"
     return "not submitted"
+
+
+def _files(items) -> list[dict]:
+    """Normalize a list of Moodle file dicts to {filename, size, url} (plain
+    Moodle links; browser-authenticated — token download deferred)."""
+    return [
+        {"filename": f.get("filename"), "size": f.get("filesize"), "url": f.get("fileurl")}
+        for f in (items or [])
+    ]
+
+
+def _plugin_files(container: dict, allowed_areas: set | None = None) -> list[dict]:
+    """Files from a submission/feedback container's plugins[].fileareas[].files,
+    optionally restricted to `allowed_areas`."""
+    out = []
+    for p in container.get("plugins", []) or []:
+        for area in p.get("fileareas", []) or []:
+            if allowed_areas is not None and area.get("area") not in allowed_areas:
+                continue
+            out.extend(_files(area.get("files")))
+    return out
+
+
+def _plugin_text(container: dict) -> str:
+    """Concatenated plain text from plugins[].editorfields (online-text
+    submission or feedback comments)."""
+    parts = [
+        strip_html(ef.get("text"))
+        for p in container.get("plugins", []) or []
+        for ef in p.get("editorfields", []) or []
+    ]
+    return " ".join(t for t in parts if t)
+
+
+def assignment_detail(client, course_id: int, cmid: int, instance: int) -> dict:
+    """Rich detail for one assignment: instructions + attachments + your
+    submission + feedback/grade. Combines mod_assign_get_assignments (metadata)
+    and mod_assign_get_submission_status (your attempt)."""
+    data = client.ws("mod_assign_get_assignments", **{"courseids[0]": course_id})
+    asg = next(
+        (
+            x
+            for c in data.get("courses", [])
+            for x in c.get("assignments", [])
+            if x.get("cmid") == cmid or x.get("id") == instance
+        ),
+        {},
+    )
+    detail = {
+        "description": strip_html(asg.get("intro")),
+        "attachments": _files(asg.get("introattachments")) + _files(asg.get("introfiles")),
+        "due": fmt_time(asg.get("duedate")),
+        "opens": fmt_time(asg.get("allowsubmissionsfromdate")),
+        "cutoff": fmt_time(asg.get("cutoffdate")),
+        "grade_max": asg.get("grade"),
+    }
+
+    st = client.ws("mod_assign_get_submission_status", assignid=instance)
+    sub = (st.get("lastattempt") or {}).get("submission") or {}
+    fb = st.get("feedback") or {}
+    detail["status"] = _status_from(st)
+    detail["submission"] = {
+        "submitted_at": fmt_time(sub.get("timemodified")),
+        "files": _plugin_files(sub),
+        "text": _plugin_text(sub),
+    }
+    detail["feedback"] = {
+        "grade": (fb.get("grade") or {}).get("grade"),
+        "grade_display": strip_html(fb.get("gradefordisplay")),
+        "graded_at": fmt_time(fb.get("gradeddate")),
+        "comment": _plugin_text(fb),
+        "files": _plugin_files(fb, _FEEDBACK_FILE_AREAS),
+    }
+    return detail
 
 
 def _to_epoch(value: str | None, *, end_of_day: bool = False) -> int | None:

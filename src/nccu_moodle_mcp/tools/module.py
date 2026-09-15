@@ -3,12 +3,15 @@ id, dispatching by module type to return its content or the right follow-up."""
 
 from __future__ import annotations
 
-from mcp.server.mcpserver import Context
+from typing import Annotated
 
-from ..app import CourseId, mcp, run_tool
+from mcp.server.mcpserver import Context
+from pydantic import Field
+
+from ..app import mcp, run_tool
 from ..helpers import strip_html
 from .announcements import forum_discussions
-from .assignments import _status_from
+from .assignments import assignment_detail
 
 
 def _find_module(contents: list, cmid: int) -> dict | None:
@@ -34,21 +37,30 @@ def _files(mod: dict) -> list[dict]:
     ]
 
 
-def get_module(client, course_id: int, cmid: int) -> dict:
-    """Open one course item (by its course-module id / cmid, from
-    get_course_contents) and return its content, chosen by module type:
+def get_module(client, cmid: int, course_id: int | None = None) -> dict:
+    """Open one course item by its course-module id (cmid) — the `id` in a
+    `/mod/<type>/view.php?id=<cmid>` link — and return its content by type:
 
       resource/folder -> {files:[{filename, mimetype, size, url}]}  (browser links)
       url             -> {external_url}
       page            -> {html}
       label           -> {text}
-      forum           -> {forum_id, discussions:[tiles]}  (read one via get_announcement)
-      assign          -> {status}
+      forum           -> {forum_id, intro, discussions:[tiles]}  (read one via get_announcement)
+      assign          -> {description, attachments, due/opens/cutoff, grade_max,
+                          status, submission{...}, feedback{...}}
       quiz            -> {metadata, attempts}
       other           -> {description}
 
-    Every result also carries {course_id, cmid, instance, type, name, view_url}.
+    `course_id` is optional: if omitted it's resolved from the cmid via
+    core_course_get_course_module, so a bare cmid (e.g. from a view.php link) is
+    enough. Every result also carries {course_id, cmid, instance, type, name, view_url}.
     """
+    if course_id is None:
+        cm = client.ws("core_course_get_course_module", cmid=cmid).get("cm") or {}
+        course_id = cm.get("course")
+        if course_id is None:
+            return {"cmid": cmid, "error": "could not resolve course from cmid"}
+
     mod = _find_module(client.ws("core_course_get_contents", courseid=course_id), cmid)
     if mod is None:
         return {"course_id": course_id, "cmid": cmid, "error": "module not found in course"}
@@ -85,9 +97,7 @@ def get_module(client, course_id: int, cmid: int) -> dict:
         out["intro"] = strip_html(mod.get("description"))
         out["discussions"] = forum_discussions(client, instance, course_id)
     elif mtype == "assign":
-        status = client.ws("mod_assign_get_submission_status", assignid=instance)
-        out["status"] = _status_from(status)
-        out["intro"] = strip_html(mod.get("description"))
+        out.update(assignment_detail(client, course_id, cmid, instance))
     elif mtype == "quiz":
         quizzes = client.ws("mod_quiz_get_quizzes_by_courses", **{"courseids[0]": course_id})
         out["metadata"] = next(
@@ -104,21 +114,31 @@ def get_module(client, course_id: int, cmid: int) -> dict:
     name="get_module",
     title="Open a course item",
     description=(
-        "Open ONE item a teacher posted in a course and return its content, given "
-        "the item's `course_id` and `cmid` (course-module id) from "
-        "get_course_contents. It detects the item type and returns the right "
-        "content:\n"
+        "Open ONE item a teacher posted and return its content, given its `cmid` "
+        "(course-module id — the `id` in a /mod/<type>/view.php?id=<cmid> link, "
+        "or from get_course_contents). `course_id` is OPTIONAL — omit it and it's "
+        "resolved from the cmid, so a bare cmid/link is enough. It detects the "
+        "item type and returns:\n"
         "  - resource/folder -> files:[{filename, mimetype, size, url}] (open the "
         "url/view_url in a browser to download; no direct download here yet)\n"
         "  - url   -> external_url\n"
         "  - page  -> html (plain text)\n"
         "  - label -> text\n"
-        "  - forum -> forum_id + discussions[] (read one with get_announcement)\n"
-        "  - assign -> status  ·  quiz -> metadata + attempts\n"
-        "  - otherwise -> description\n\n"
+        "  - forum -> forum_id + intro + discussions[] (read one with get_announcement)\n"
+        "  - assign -> description (instructions), attachments, due/opens/cutoff, "
+        "grade_max, status, submission{submitted_at,files,text}, "
+        "feedback{grade,grade_display,graded_at,comment,files}\n"
+        "  - quiz -> metadata + attempts  ·  otherwise -> description\n\n"
         "Always includes {course_id, cmid, instance, type, name, view_url}.\n\n"
         "Credentials come from the MCP settings headers, not from you."
     ),
 )
-def _get_module(ctx: Context, course_id: CourseId, cmid: int) -> dict:
-    return run_tool(ctx, lambda m: get_module(m, course_id, cmid))
+def _get_module(
+    ctx: Context,
+    cmid: Annotated[int, Field(description="Course-module id (the id in a view.php?id= link).")],
+    course_id: Annotated[
+        int | None,
+        Field(description="Moodle course id. Optional — resolved from cmid if omitted."),
+    ] = None,
+) -> dict:
+    return run_tool(ctx, lambda m: get_module(m, cmid, course_id))
