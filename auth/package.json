@@ -1,0 +1,27 @@
+{
+  "name": "nccu-moodle-auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent OAuth login/consent service for Ory Hydra: authenticates NCCU Moodle via SSO and relays a Web Services token. No dependency on the Python MCP.",
+  "license": "MIT",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "axios-cookiejar-support": "^5.0.3",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.0",
+    "tough-cookie": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.16.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.2"
+  }
+}

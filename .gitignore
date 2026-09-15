@@ -9,6 +9,7 @@ env/
 # Environment / secrets — never commit credentials
 .env
 .env.*
+!.env.example
 *.secret
 
 # Personal MCP client configs (may contain NCCU credentials in headers)
@@ -21,6 +22,10 @@ opencode.json
 
 # Claude Code conversation exports (may contain credentials in plaintext)
 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
+# Node (auth service)
+node_modules/
+auth/dist/
 
 # Logs and OS cruft
 *.log

@@ -1,0 +1,116 @@
+# Self-hosted OAuth stack for the NCCU Moodle MCP (all open-source, all Docker).
+#
+#   cp oauth/.env.example .env      # set PUBLIC_URL + secrets
+#   docker compose -f docker-compose.oauth.yml up -d --build
+#   ./oauth/register-client.sh      # register the ChatGPT OAuth client
+#
+# Topology (see docs/oauth.md):
+#   ChatGPT ──► Caddy (:8080) ──► Hydra (issuer)            /oauth2/*, /.well-known/*
+#                            └──► auth (login/consent)      /login, /consent
+#                            └──► auth /verify → MCP (:3033) /mcp  (token relay)
+#
+# Only Caddy is published. Point your tunnel (e.g. Cloudflare) at :8080 and set
+# PUBLIC_URL to that public https URL.
+
+services:
+  # --- Ory Hydra: the OAuth2/OIDC issuer + its database ---------------------- #
+  hydra-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hydra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydra-secret}
+      POSTGRES_DB: hydra
+    volumes:
+      - hydra-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hydra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    command: migrate sql -e --yes
+    environment:
+      DSN: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
+    depends_on:
+      hydra-postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  hydra:
+    image: oryd/hydra:v2.2.0
+    command: serve all --dev   # --dev: HTTP ok (TLS is terminated at the tunnel)
+    environment:
+      DSN: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
+      SECRETS_SYSTEM: ${HYDRA_SECRET:?set HYDRA_SECRET in .env (32+ chars)}
+      URLS_SELF_ISSUER: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+      URLS_SELF_PUBLIC: ${PUBLIC_URL}
+      URLS_LOGIN: ${PUBLIC_URL}/login
+      URLS_CONSENT: ${PUBLIC_URL}/consent
+      # Opaque access tokens (default) so the client never sees the Moodle token.
+      STRATEGIES_ACCESS_TOKEN: opaque
+      TTL_ACCESS_TOKEN: 1h
+      OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
+      # Dynamic Client Registration (RFC 7591): let an MCP client (ChatGPT)
+      # register itself when the connector is added by URL — no manual client
+      # setup. Access still requires a Moodle SSO login at consent.
+      OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED: "true"
+      OIDC_DYNAMIC_CLIENT_REGISTRATION_DEFAULT_SCOPE: openid,offline,moodle
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # --- Our independent login/consent + verify service ----------------------- #
+  auth:
+    build:
+      context: ./auth
+    environment:
+      PORT: "3000"
+      HYDRA_ADMIN_URL: http://hydra:4445
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+      # MOODLE_SSO_URL: (optional) skip discovery by pinning the SSO Login.aspx URL
+    depends_on:
+      - hydra
+    restart: unless-stopped
+
+  # --- The existing MCP server (Python) ------------------------------------- #
+  mcp:
+    build:
+      context: .
+      target: prod
+      args:
+        - PROJECT_PATH=/project/nccu-moodle-mcp
+    environment:
+      - PROJECT_PATH=/project/nccu-moodle-mcp
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3033
+      - MCP_ALLOWED_HOSTS=*
+    restart: unless-stopped
+
+  # --- One-off helper to register the OAuth client via Hydra's Admin API ---- #
+  # Not started normally (profile "tools"); invoked by oauth/register-client.sh.
+  client-register:
+    image: curlimages/curl:8.10.1
+    profiles: ["tools"]
+    entrypoint: ["sh", "-c"]
+    command: ["true"]
+    depends_on:
+      - hydra
+
+  # --- Gateway: routes public traffic, relays the token to the MCP ---------- #
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "${GATEWAY_PORT:-8080}:80"
+    volumes:
+      - ./oauth/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - hydra
+      - auth
+      - mcp
+    restart: unless-stopped
+
+volumes:
+  hydra-pg:

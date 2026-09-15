@@ -79,10 +79,56 @@ Components (all open-source, Docker):
   a "reconnect (sign in again)" tool error instead of a raw WS error.
 - Direct user/pass headers still work unchanged (Claude Code / opencode configs).
 
-## TODO (next steps)
+## The independent auth service (`auth/`)
 
-- [ ] `docker-compose.oauth.yml`: Hydra + Hydra migrate + login/consent app + gateway + MCP backend.
-- [ ] Login/consent app: Moodle login form → `MoodleClient.login`/`fetch_ws_token` → Hydra accept with `{ws_token, base}` session data.
-- [ ] Gateway: introspect opaque token, inject `X-Moodle-Token`/`X-Moodle-Base`.
-- [ ] Register an OAuth client for ChatGPT; document its Authorization/Token URLs.
-- [ ] End-to-end: ChatGPT → OAuth login (Moodle creds) → tool call succeeds; expired token → reconnect.
+A standalone **Node/TypeScript** service — it shares no code with the Python MCP
+and **reimplements the NCCU SSO flow itself** (`auth/src/moodle.ts`, ported from
+`MoodleClient`). It provides:
+
+- `GET/POST /login` — the Moodle login page; on submit it runs SSO, mints a WS
+  token, and accepts the Hydra login with `{moodle_token, moodle_base}` as
+  `context`. The consent step (auto-granted, first-party) copies that into the
+  token session's `access_token` extras, which surface as `ext` on introspection.
+- `GET /verify` — Caddy `forward_auth` target: introspects the bearer token and
+  returns `X-Moodle-Token` / `X-Moodle-Base` for the gateway to inject. A missing
+  or expired token → 401 with `WWW-Authenticate: … resource_metadata=…`.
+- The discovery documents (below).
+
+## Dynamic Client Registration + discovery
+
+So an MCP client (ChatGPT) can **register itself** when the connector is added by
+URL — no manual client setup:
+
+- Hydra DCR is enabled (`OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED=true`), exposing
+  `POST /oauth2/register` (RFC 7591). Default scopes: `openid offline moodle`.
+- Hydra serves `/.well-known/openid-configuration` but **not** RFC 8414 metadata
+  and does **not** advertise the DCR endpoint. So the auth service publishes:
+  - `/.well-known/oauth-authorization-server` (RFC 8414) — includes
+    `registration_endpoint` and `code_challenge_methods_supported: ["S256"]`.
+  - `/.well-known/oauth-protected-resource` (RFC 9728) — points at the AS.
+  The gateway routes these two paths to the auth service (before Hydra's
+  `/.well-known/*` catch-all); everything else OAuth goes to Hydra.
+
+## Deploy (Docker)
+
+```
+cp oauth/.env.example .env         # set PUBLIC_URL (your tunnel https URL) + secrets
+docker compose -f docker-compose.oauth.yml up -d --build
+# optional (DCR makes it unnecessary): pre-register a client
+./oauth/register-client.sh
+```
+
+Point your tunnel (e.g. Cloudflare) at the Caddy gateway port (`GATEWAY_PORT`,
+default 8080). In ChatGPT, add the connector with the MCP URL `${PUBLIC_URL}/mcp`;
+it discovers the AS, self-registers, and runs auth-code + PKCE.
+
+## Status — verified end-to-end (local)
+
+The full chain was exercised against the running stack with a real NCCU account:
+discovery → **DCR** (self-registered client) → **auth code + PKCE** → Moodle SSO
+login → opaque token → `/mcp` `tools/call` — the gateway relayed the token and
+`search_courses` ran as the logged-in user (correct courses + roles). A
+garbage/expired token surfaces the "reconnect" error.
+
+Not yet done: run against the real public tunnel domain + the actual ChatGPT
+connector (needs `PUBLIC_URL`); optional login/consent styling.

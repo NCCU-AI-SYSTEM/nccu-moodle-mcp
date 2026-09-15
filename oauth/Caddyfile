@@ -1,0 +1,54 @@
+# Gateway for the NCCU Moodle MCP OAuth stack.
+# TLS is terminated by the tunnel (e.g. Cloudflare) in front of this, so Caddy
+# serves plain HTTP on :80 and does not try to provision certificates.
+#
+# All routing uses `handle` blocks so they are mutually exclusive and evaluated
+# in order (first match wins) — mixing bare directives with a handle fallback
+# breaks precedence.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	# --- Discovery metadata for MCP client auto-registration (served by our
+	#     auth service; must come BEFORE the Hydra catch-all for /.well-known/*) ---
+	handle /.well-known/oauth-authorization-server {
+		reverse_proxy auth:3000
+	}
+	handle /.well-known/oauth-protected-resource {
+		reverse_proxy auth:3000
+	}
+
+	# --- OAuth issuer endpoints (ChatGPT talks to Hydra): openid-configuration,
+	#     jwks, /oauth2/* incl. /oauth2/register (DCR), /userinfo ---
+	@hydra path /oauth2/* /.well-known/* /userinfo /health/*
+	handle @hydra {
+		reverse_proxy hydra:4444
+	}
+
+	# --- Login / consent UI (user's browser, redirected here by Hydra) ---
+	@authui path /login /login/* /consent /consent/*
+	handle @authui {
+		reverse_proxy auth:3000
+	}
+
+	# --- MCP endpoint: verify the bearer token, inject the Moodle token ---
+	handle /mcp* {
+		forward_auth auth:3000 {
+			uri /verify
+			# Copy the Moodle token + base from the verify response onto the
+			# request that goes upstream to the MCP server.
+			copy_headers X-Moodle-Token X-Moodle-Base
+		}
+		reverse_proxy mcp:3033 {
+			# The MCP server authenticates via the injected headers, not the
+			# client's bearer token — don't forward it.
+			header_up -Authorization
+		}
+	}
+
+	handle {
+		respond "NCCU Moodle MCP gateway" 200
+	}
+}
