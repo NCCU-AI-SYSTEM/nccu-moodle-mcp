@@ -1,4 +1,4 @@
-/** Minimal server-rendered login page. No client JS, no external assets. */
+/** Server-rendered login page with a click-through Terms consent modal. */
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
@@ -6,9 +6,7 @@ function esc(s: string): string {
   );
 }
 
-// Static Terms & Conditions / data-use text shown on the login page. Plain,
-// self-contained; describes exactly how credentials and the Moodle token are
-// handled by this service.
+// Static Terms & Conditions / data-use text. Plain, self-contained.
 const TERMS: [string, string][] = [
   [
     "1. The Service",
@@ -70,6 +68,13 @@ const TERMS: [string, string][] = [
       "of the Service, including any loss of data or academic consequences. You use the " +
       "Service at your own risk.",
   ],
+  [
+    "9. Acceptance",
+    "By entering your credentials and signing in, you acknowledge that you have read and " +
+      "agree to these Terms & Conditions and Data-Use terms. You understand that your " +
+      "password is used only to sign in and is never stored, and that your Moodle token " +
+      "is stored only in encrypted form.",
+  ],
 ];
 
 export function loginPage(challenge: string, error?: string): string {
@@ -82,59 +87,150 @@ export function loginPage(challenge: string, error?: string): string {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NCCU Moodle MCP — Sign in</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light dark; --bd:#ccc; --muted:#888; }
+  @media (prefers-color-scheme: dark){ :root{ --bd:#3a3a3c; --muted:#9a9a9e; } }
   body { font-family: system-ui, sans-serif; margin:0; display:flex; min-height:100vh;
          align-items:center; justify-content:center; background:#f5f5f7; padding:24px 0; }
   .card { width:min(92vw,400px); background:#fff; border-radius:12px; padding:28px;
           box-shadow:0 6px 24px rgba(0,0,0,.08); }
   @media (prefers-color-scheme: dark){ body{background:#111} .card{background:#1c1c1e;color:#eee} }
-  h1 { font-size:18px; margin:0 0 4px; } p.sub{ color:#888; font-size:13px; margin:0 0 20px; }
-  label { display:block; font-size:13px; margin:14px 0 4px; }
+  h1 { font-size:18px; margin:0 0 4px; } p.sub{ color:var(--muted); font-size:13px; margin:0 0 20px; }
+  label.fld { display:block; font-size:13px; margin:14px 0 4px; }
   input[type=text], input[type=password] {
           width:100%; box-sizing:border-box; padding:10px 12px; font-size:15px;
-          border:1px solid #ccc; border-radius:8px; background:transparent; color:inherit; }
-  button { width:100%; margin-top:20px; padding:11px; font-size:15px; border:0;
+          border:1px solid var(--bd); border-radius:8px; background:transparent; color:inherit; }
+  button.primary { width:100%; margin-top:20px; padding:11px; font-size:15px; border:0;
            border-radius:8px; background:#0a66c2; color:#fff; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  details.terms { margin-top:18px; border:1px solid #ddd; border-radius:8px; }
-  @media (prefers-color-scheme: dark){ details.terms{border-color:#3a3a3c} input[type=text],input[type=password]{border-color:#3a3a3c} }
-  details.terms summary { cursor:pointer; padding:10px 12px; font-size:13px; font-weight:600; }
-  .terms-body { max-height:220px; overflow-y:auto; padding:0 12px 8px; font-size:12px;
-                line-height:1.5; color:#666; }
-  @media (prefers-color-scheme: dark){ .terms-body{color:#aaa} }
-  .terms-body h4 { font-size:12.5px; margin:12px 0 2px; color:inherit; }
-  .terms-body p { margin:0 0 4px; }
-  .agree { display:flex; gap:8px; align-items:flex-start; margin-top:16px; font-size:12.5px;
-           color:#555; line-height:1.4; }
-  @media (prefers-color-scheme: dark){ .agree{color:#bbb} }
-  .agree input { margin-top:2px; }
+  button.primary:disabled { opacity:.5; cursor:not-allowed; }
+  .agree { display:flex; gap:8px; align-items:flex-start; margin-top:18px; font-size:12.5px;
+           color:var(--muted); line-height:1.45; }
+  .agree input { margin-top:2px; flex:0 0 auto; }
+  a.tc-link { color:inherit; text-decoration:underline; cursor:pointer; font-weight:600; }
+
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex;
+             align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .modal { width:min(94vw,520px); max-height:86vh; display:flex; flex-direction:column;
+           background:#fff; color:#222; border-radius:12px; overflow:hidden; }
+  @media (prefers-color-scheme: dark){ .modal{ background:#1c1c1e; color:#eee; } }
+  .modal-head { display:flex; align-items:center; justify-content:space-between;
+                padding:14px 16px; border-bottom:1px solid var(--bd); }
+  .modal-head strong { font-size:15px; }
+  .modal-head button { background:none; border:0; font-size:22px; line-height:1; cursor:pointer;
+                       color:inherit; }
+  .modal-body { overflow-y:auto; padding:4px 18px 14px; font-size:12.5px; line-height:1.55;
+                color:var(--muted); }
+  .modal-body h4 { font-size:13px; margin:14px 0 2px; color:inherit; }
+  .modal-body p { margin:0 0 6px; }
+  .tc-end { text-align:center; font-weight:600; margin-top:14px !important; }
+  .modal-foot { display:flex; gap:10px; padding:12px 16px; border-top:1px solid var(--bd); }
+  .modal-foot button { flex:1; padding:10px; font-size:14px; border-radius:8px; cursor:pointer; }
+  .modal-foot .disagree { background:transparent; border:1px solid var(--bd); color:inherit; }
+  .modal-foot .agreebtn { background:#0a66c2; color:#fff; border:0; }
+  .modal-foot .agreebtn:disabled { opacity:.5; cursor:not-allowed; }
 </style></head>
 <body>
-  <form class="card" method="post" action="/login">
+  <form class="card" method="post" action="/login" id="form">
     <h1>NCCU Moodle</h1>
     <p class="sub">Sign in with your <strong>iNCCU</strong> (NCCU portal) account to connect.</p>
     ${err}
     <input type="hidden" name="challenge" value="${esc(challenge)}">
-    <label for="u">iNCCU Account (Student ID)</label>
+    <label class="fld" for="u">iNCCU Account (Student ID)</label>
     <input id="u" name="username" type="text" autocomplete="username" autofocus required>
-    <label for="p">Password</label>
+    <label class="fld" for="p">Password</label>
     <input id="p" name="password" type="password" autocomplete="current-password" required>
 
-    <details class="terms">
-      <summary>Terms &amp; Conditions and Data Use — please read</summary>
-      <div class="terms-body">
-        ${terms}
-      </div>
-    </details>
+    <div class="agree">
+      <input type="checkbox" name="agree" value="yes" id="agree" required>
+      <span>I have read and agree to the
+        <a class="tc-link" id="tc-link" role="button" tabindex="0">Terms &amp; Conditions and Data-Use terms</a>.</span>
+    </div>
 
-    <label class="agree">
-      <input type="checkbox" name="agree" value="yes" required>
-      <span>I have read and agree to the Terms &amp; Conditions and Data-Use terms above.
-        I understand my password is used only to sign in and is never stored, and that my
-        Moodle token is stored only in encrypted form. By signing in, I accept these terms.</span>
-    </label>
-
-    <button type="submit">Sign in</button>
+    <button type="submit" class="primary" id="submit" disabled>Sign in</button>
   </form>
+
+  <div class="overlay" id="tc-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="tc-title">
+      <div class="modal-head">
+        <strong id="tc-title">Terms &amp; Conditions and Data Use</strong>
+        <button type="button" id="tc-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="tc-body">
+        ${terms}
+        <p class="tc-end">— End of Terms — scroll reached, you may now agree —</p>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="disagree" id="tc-disagree">Disagree</button>
+        <button type="button" class="agreebtn" id="tc-agree" disabled>Scroll to the bottom to agree</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  var overlay = document.getElementById('tc-overlay');
+  var body = document.getElementById('tc-body');
+  var agreeBtn = document.getElementById('tc-agree');
+  var cb = document.getElementById('agree');
+  var submit = document.getElementById('submit');
+  var link = document.getElementById('tc-link');
+
+  function setAgreed(v) { cb.checked = v; submit.disabled = !v; }
+
+  function atBottom() {
+    return body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+  }
+  function refreshAgree() {
+    var ok = atBottom();
+    agreeBtn.disabled = !ok;
+    agreeBtn.textContent = ok ? 'I Agree' : 'Scroll to the bottom to agree';
+  }
+  function open() {
+    overlay.hidden = false;
+    document.body.style.overflow = 'hidden';
+    body.scrollTop = 0;
+    // allow layout to settle before measuring
+    setTimeout(refreshAgree, 0);
+  }
+  function close() {
+    overlay.hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  // Clicking the checkbox: if it's not yet agreed, intercept and open the modal
+  // (so it can only be checked by scrolling + agreeing). Unchecking is allowed.
+  cb.addEventListener('click', function (e) {
+    if (!cb.checked) { e.preventDefault(); open(); }
+    else { setAgreed(false); }
+  });
+  cb.addEventListener('keydown', function (e) {
+    if ((e.key === ' ' || e.key === 'Enter') && !cb.checked) { e.preventDefault(); open(); }
+  });
+
+  function openFromLink(e) { e.preventDefault(); open(); }
+  link.addEventListener('click', openFromLink);
+  link.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') openFromLink(e);
+  });
+
+  body.addEventListener('scroll', refreshAgree);
+  window.addEventListener('resize', function () { if (!overlay.hidden) refreshAgree(); });
+
+  agreeBtn.addEventListener('click', function () {
+    if (agreeBtn.disabled) return;
+    setAgreed(true);
+    close();
+  });
+  document.getElementById('tc-close').addEventListener('click', close);   // X: leave unchecked
+  document.getElementById('tc-disagree').addEventListener('click', function () {
+    setAgreed(false); close();
+  });
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !overlay.hidden) close();
+  });
+
+  setAgreed(false); // start not agreed; Sign in disabled
+})();
+</script>
 </body></html>`;
 }
