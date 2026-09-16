@@ -31,7 +31,12 @@
 	#     jwks, the rest of /oauth2/* incl. /oauth2/register (DCR), /userinfo ---
 	@hydra path /oauth2/* /.well-known/* /userinfo /health/*
 	handle @hydra {
-		reverse_proxy hydra:4444
+		reverse_proxy hydra:4444 {
+			# The tunnel terminates TLS, so tell Hydra the real client scheme
+			# (https in prod) — needed so its login CSRF cookie is set Secure and
+			# survives the OAuth redirect. FWD_PROTO=http for local plain-http.
+			header_up X-Forwarded-Proto {$FWD_PROTO:https}
+		}
 	}
 
 	# --- Login / consent UI (user's browser, redirected here by Hydra) ---

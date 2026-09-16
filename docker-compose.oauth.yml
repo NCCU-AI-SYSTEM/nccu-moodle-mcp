@@ -33,7 +33,10 @@ services:
   hydra:
     image: oryd/hydra:v2.2.0
     entrypoint: ["sh", "-c"]
-    command: ["hydra migrate sql -e --yes && hydra serve all --dev"]
+    # Production (default): `hydra serve all` behind a TLS-terminating proxy —
+    # HYDRA_EXTRA_ARGS is empty. For LOCAL http testing set HYDRA_EXTRA_ARGS=--dev
+    # (and FWD_PROTO=http on caddy) in .env.
+    command: ["hydra migrate sql -e --yes && hydra serve all $${HYDRA_EXTRA_ARGS}"]
     environment:
       DSN: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
       SECRETS_SYSTEM: ${HYDRA_SECRET:?set HYDRA_SECRET in .env (32+ chars)}
@@ -41,6 +44,12 @@ services:
       URLS_SELF_PUBLIC: ${PUBLIC_URL}
       URLS_LOGIN: ${PUBLIC_URL}/login
       URLS_CONSENT: ${PUBLIC_URL}/consent
+      HYDRA_EXTRA_ARGS: ${HYDRA_EXTRA_ARGS:-}
+      # TLS is terminated by the tunnel/proxy; trust it so Hydra treats requests
+      # (carrying X-Forwarded-Proto: https from Caddy) as secure and sets Secure
+      # cookies — required for the login CSRF cookie to survive the OAuth redirect.
+      SERVE_TLS_ALLOW_TERMINATION_FROM: 0.0.0.0/0
+      SERVE_COOKIES_SAME_SITE_MODE: Lax
       # Opaque access tokens (default) so the client never sees the Moodle token.
       STRATEGIES_ACCESS_TOKEN: opaque
       # Refresh enabled (offline_access): the WS token is re-wrapped under the new
@@ -91,6 +100,10 @@ services:
     image: caddy:2-alpine
     ports:
       - "${GATEWAY_PORT:-8971}:80"
+    environment:
+      # Scheme Caddy tells Hydra the client used. Default https (TLS terminated by
+      # the tunnel). For LOCAL plain-http testing set FWD_PROTO=http in .env.
+      FWD_PROTO: ${FWD_PROTO:-https}
     volumes:
       - ./oauth/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
