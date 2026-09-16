@@ -76,9 +76,16 @@ services:
       HYDRA_ADMIN_URL: http://hydra:4445
       HYDRA_PUBLIC_URL: http://hydra:4444
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+      # Persist the sealed token vault (encrypted; keyed by token hash) in the
+      # existing Postgres so it survives auth restarts. Reuses Hydra's database
+      # with its own table; unset to fall back to in-memory only.
+      DATABASE_URL: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
       # MOODLE_SSO_URL: (optional) skip discovery by pinning the SSO Login.aspx URL
     depends_on:
-      - hydra
+      hydra-postgres:
+        condition: service_healthy
+      hydra:
+        condition: service_started
     restart: unless-stopped
 
   # --- The actual MCP server (Python) ------------------------------------- #

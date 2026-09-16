@@ -154,14 +154,14 @@ app.all("/verify", async (req, res) => {
     const accessToken = m[1];
     const intro = await introspect(accessToken);
     if (!intro.active) {
-      evict(accessToken); // token expired/revoked — drop any vault entry
+      await evict(accessToken); // token expired/revoked — drop any vault entry
       res.set("WWW-Authenticate", challenge("invalid_token"));
       return res.status(401).end();
     }
     // Decrypt the Moodle token from the vault, keyed by this access token. It was
     // sealed at the token endpoint (code exchange / refresh); a miss means we
-    // lost state (e.g. restart) -> force re-login.
-    const resolved = unsealByAccess(accessToken);
+    // lost state -> force re-login.
+    const resolved = await unsealByAccess(accessToken);
     if (!resolved || !resolved.wsToken) {
       res.set("WWW-Authenticate", challenge("invalid_token"));
       return res.status(401).end();

@@ -51,28 +51,33 @@ Hydra likewise stores only hashes of them. What we store (`auth/src/vault.ts`):
 - **value** = AES-256-GCM **ciphertext of the WS token** + `{salt, iv, tag, base}`.
   The key `HKDF-SHA256(token, salt)` is derived per request, never persisted.
 
-Two maps hold the SAME sealed WS token under different tokens, because `/mcp` only
-ever presents the access token and a refresh only presents the refresh token:
-- `vaultAt`: `sha256(access_token)` → sealed WS  (read by `/verify`)
-- `vaultRt`: `sha256(refresh_token)` → sealed WS  (read on refresh)
+Two entries hold the SAME sealed WS token under different tokens, because `/mcp`
+only ever presents the access token and a refresh only presents the refresh token:
+- `sha256(access_token)` → sealed WS  (read by `/verify`)
+- `sha256(refresh_token)` → sealed WS  (read on refresh)
+
+These are persisted in the existing **Postgres** (reused, own `token_vault` table;
+`auth/src/store.ts`) so the vault survives an auth-service restart — the Moodle
+token is used continuously, and we don't want to force a re-login on every
+deploy. Persisting is safe because the rows are ciphertext keyed by token hashes
+and the key is never stored. (`pending` stays in memory only.)
 
 Flow:
 - **Consent:** WS goes into an in-memory single-use `pending[link]`; only the
   random `link` handle is placed in the Hydra session.
 - **Code exchange (proxied token endpoint):** recover WS from `pending` (introspect
   the new AT → `ext.link`), seal under the new AT + RT.
-- **Refresh (proxied token endpoint):** recover WS from `vaultRt[old RT]`, re-seal
-  under the new AT + RT. The WS value is unchanged — only re-wrapped.
+- **Refresh (proxied token endpoint):** recover WS from the old RT's entry, re-seal
+  under the new AT + RT (writing two fresh rows), and drop the old RT row. The WS
+  value is unchanged — only re-wrapped. (The old AT row expires by TTL.)
 - **`/mcp`:** introspect the AT (validity/revocation), `unsealByAccess(AT)`, inject
   headers.
 
-**Honest guarantee:** unreadable *at rest* (a store dump is `{hash → ciphertext}`,
+**Honest guarantee:** unreadable *at rest* (a DB dump is `{hash → ciphertext}`,
 useless without a live token to both locate and decrypt an entry), not *never*
 readable — during a request the server decrypts to call Moodle. Protects a stolen
-DB/volume/config and a between-requests RAM dump; does **not** protect a
-compromised *running* service. Stores are in-memory, so an auth-service restart
-forces re-login (the ciphertext-by-hash values are safe to persist to Redis —
-deferred).
+DB/volume/config; does **not** protect a compromised *running* service. Verified:
+the plaintext WS token appears in zero `token_vault` rows.
 
 ## Architecture
 

@@ -18,7 +18,7 @@
 import type { Request, Response } from "express";
 import axios from "axios";
 import { introspect } from "./hydra.js";
-import { sealForTokens, takePending, unsealByRefresh } from "./vault.js";
+import { evictRefresh, sealForTokens, takePending, unsealByRefresh } from "./vault.js";
 
 const HYDRA_TOKEN_URL =
   (process.env.HYDRA_PUBLIC_URL || "http://hydra:4444").replace(/\/$/, "") + "/oauth2/token";
@@ -65,11 +65,14 @@ export async function tokenProxy(req: Request, res: Response): Promise<void> {
           const intro = await introspect(accessToken);
           const link = intro.ext?.link as string | undefined;
           const ws = link ? takePending(link) : undefined;
-          if (ws) sealForTokens(ws.wsToken, ws.base, accessToken, refreshToken);
+          if (ws) await sealForTokens(ws.wsToken, ws.base, accessToken, refreshToken);
         } else if (grant === "refresh_token") {
           const oldRt = params.get("refresh_token") || "";
-          const ws = unsealByRefresh(oldRt);
-          if (ws) sealForTokens(ws.wsToken, ws.base, accessToken, refreshToken);
+          const ws = await unsealByRefresh(oldRt);
+          if (ws) {
+            await sealForTokens(ws.wsToken, ws.base, accessToken, refreshToken);
+            await evictRefresh(oldRt); // drop the now-rotated RT's stale entry
+          }
         }
       }
     } catch (e) {
