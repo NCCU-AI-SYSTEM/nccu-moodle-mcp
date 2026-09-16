@@ -20,8 +20,15 @@
 		reverse_proxy auth:3000
 	}
 
+	# --- Token endpoint: proxied through our auth service, which re-wraps the
+	#     Moodle token under the new access/refresh tokens, then forwards to Hydra.
+	#     Must come BEFORE the /oauth2/* catch-all below. ---
+	handle /oauth2/token {
+		reverse_proxy auth:3000
+	}
+
 	# --- OAuth issuer endpoints (ChatGPT talks to Hydra): openid-configuration,
-	#     jwks, /oauth2/* incl. /oauth2/register (DCR), /userinfo ---
+	#     jwks, the rest of /oauth2/* incl. /oauth2/register (DCR), /userinfo ---
 	@hydra path /oauth2/* /.well-known/* /userinfo /health/*
 	handle @hydra {
 		reverse_proxy hydra:4444

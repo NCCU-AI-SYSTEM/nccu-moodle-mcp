@@ -43,16 +43,16 @@ services:
       URLS_CONSENT: ${PUBLIC_URL}/consent
       # Opaque access tokens (default) so the client never sees the Moodle token.
       STRATEGIES_ACCESS_TOKEN: opaque
-      # No refresh (offline dropped): the WS token is encrypted under the access
-      # token, which must not rotate — so give it a longer life and re-login on
-      # expiry. See auth/src/vault.ts and docs/oauth.md.
+      # Refresh enabled (offline_access): the WS token is re-wrapped under the new
+      # access+refresh tokens on every rotation (see tokenproxy.ts / vault.ts), so
+      # rotation is fine. Access-token life kept generous.
       TTL_ACCESS_TOKEN: 8h
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
       # Dynamic Client Registration (RFC 7591): let an MCP client (ChatGPT)
       # register itself when the connector is added by URL — no manual client
       # setup. Access still requires a Moodle SSO login at consent.
       OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED: "true"
-      OIDC_DYNAMIC_CLIENT_REGISTRATION_DEFAULT_SCOPE: openid,moodle
+      OIDC_DYNAMIC_CLIENT_REGISTRATION_DEFAULT_SCOPE: openid,offline_access,moodle
     depends_on:
       hydra-postgres:
         condition: service_healthy
@@ -65,6 +65,7 @@ services:
     environment:
       PORT: "3000"
       HYDRA_ADMIN_URL: http://hydra:4445
+      HYDRA_PUBLIC_URL: http://hydra:4444
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
       # MOODLE_SSO_URL: (optional) skip discovery by pinning the SSO Login.aspx URL
     depends_on:

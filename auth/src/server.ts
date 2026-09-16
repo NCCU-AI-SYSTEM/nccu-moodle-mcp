@@ -6,6 +6,8 @@
  *   GET  /consent  Hydra redirects here with ?consent_challenge=; auto-grant and
  *                  carry only a random `link` handle in the session (the WS token
  *                  stays in the in-memory vault, never in Hydra/Postgres).
+ *   POST /oauth2/token  transparent proxy to Hydra that re-wraps the WS token
+ *                  under the freshly issued access/refresh tokens (see tokenproxy).
  *   GET  /verify   Caddy forward_auth target: introspect the bearer token, resolve
  *                  the Moodle token from the vault, and return X-Moodle-* headers.
  *   GET  /healthz  liveness.
@@ -21,13 +23,19 @@ import {
   rejectLogin,
 } from "./hydra.js";
 import { loginPage } from "./views.js";
-import { evict, resolveToken, stashPending } from "./vault.js";
+import { evict, stashPending, unsealByAccess } from "./vault.js";
+import { tokenProxy } from "./tokenproxy.js";
 
 const app = express();
+
+// The token endpoint is proxied verbatim, so it needs the RAW body (not parsed).
+// Mount it BEFORE the urlencoded parser and route it to the proxy.
+app.post("/oauth2/token", express.raw({ type: "*/*", limit: "1mb" }), tokenProxy);
+
 app.use(express.urlencoded({ extended: false }));
 
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
-const SCOPES = ["openid", "moodle"];
+const SCOPES = ["openid", "offline_access", "moodle"];
 const RESOURCE_META = `${PUBLIC_URL}/.well-known/oauth-protected-resource`;
 
 app.get("/healthz", (_req, res) => res.type("text").send("ok"));
@@ -47,9 +55,7 @@ app.get("/.well-known/oauth-authorization-server", (_req, res) => {
     userinfo_endpoint: `${PUBLIC_URL}/userinfo`,
     scopes_supported: SCOPES,
     response_types_supported: ["code"],
-    // No refresh: the WS token is encrypted under the access token, which must
-    // not rotate (see vault.ts). Access tokens are re-minted by re-login.
-    grant_types_supported: ["authorization_code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: [
       "client_secret_post",
@@ -142,9 +148,10 @@ app.all("/verify", async (req, res) => {
       res.set("WWW-Authenticate", challenge("invalid_token"));
       return res.status(401).end();
     }
-    // Decrypt the Moodle token from the vault (or bootstrap it on the first
-    // request from the pending handle carried in the session `ext.link`).
-    const resolved = resolveToken(accessToken, intro.ext?.link as string | undefined);
+    // Decrypt the Moodle token from the vault, keyed by this access token. It was
+    // sealed at the token endpoint (code exchange / refresh); a miss means we
+    // lost state (e.g. restart) -> force re-login.
+    const resolved = unsealByAccess(accessToken);
     if (!resolved || !resolved.wsToken) {
       res.set("WWW-Authenticate", challenge("invalid_token"));
       return res.status(401).end();

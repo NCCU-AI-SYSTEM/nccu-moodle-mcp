@@ -14,15 +14,14 @@ auth SaaS (Auth0/Clerk/Firebase/…). Everything runs in Docker on our own host.
   The login step exchanges the password (used once, in memory) for a Moodle
   **Web Services (WS) token** and keeps only that.
 - **WS token unreadable at rest.** The WS token is NOT stored in the Hydra session
-  (which Hydra persists, decryptable with the app's system secret). Instead it is
-  encrypted under the client's **access token** and kept in memory — see
-  "Token storage" below.
-- **No refresh; re-login on expiry.** Refresh tokens are disabled (the `offline`
-  scope is dropped) so the access token does not rotate — required because the WS
-  token is encrypted under it. Access tokens are long-lived (`TTL_ACCESS_TOKEN`,
-  default 8h); on expiry/revocation tools 401 and the user re-runs the OAuth
-  login. We do **not** silently re-mint (NCCU login is SSO — that needs the
-  password, which we never keep).
+  (which Hydra persists, decryptable with the app's system secret). It is kept in
+  memory, encrypted under the client's tokens — see "Token storage" below.
+- **Refresh supported; WS token re-wrapped on rotation.** `offline_access` is
+  enabled (ChatGPT requires it). Because a refresh rotates the access token, the
+  WS token is sealed under BOTH the access token and the refresh token, and
+  re-sealed on every refresh (at the proxied token endpoint). The WS token's value
+  never changes on refresh — only its encryption wrapper. It changes only on
+  re-login or a Moodle-side expiry (which surfaces as a `/mcp` "reconnect" error).
 
 ## Why a token relay (and not password relay)
 
@@ -43,28 +42,37 @@ Verified facts (probe, 2026-09-15):
 ## Token storage (at-rest protection)
 
 The server must not be able to read a stored WS token on its own — only during a
-live request, when the client presents its access token. The only per-user secret
-we receive on each `/mcp` call is the **OAuth access token** (opaque). Hydra
-stores only a **hash** of it, so it is unrecoverable from the database. We use it
-as the encryption key material (`auth/src/vault.ts`):
+live request, when the client presents a token. **We never store the access or
+refresh token** (plaintext or encrypted); each appears only transiently in the
+request that carries it, used to derive a key and a lookup hash, then discarded.
+Hydra likewise stores only hashes of them. What we store (`auth/src/vault.ts`):
 
-- `key = HKDF-SHA256(IKM = access_token, salt, info = "moodle-ws")`; the WS token
-  is sealed with **AES-256-GCM** and stored (in memory) keyed by
-  `sha256(access_token)`. A stolen vault/DB reveals only ciphertext.
-- **Bootstrap:** at consent the access token doesn't exist yet, so the WS token
-  goes into an in-memory, single-use, short-TTL `pending` map and only a random
-  **`link` handle** is placed in the Hydra session. On the **first** request the
-  gateway introspects, reads `ext.link`, seals the WS token under the access token
-  into the `vault`, and drops the `pending` entry.
-- Later requests decrypt straight from the vault. Every request still introspects
-  for validity; an inactive token evicts the vault entry and 401s.
+- **key** = `sha256(token)` — an irreversible hash (the map key).
+- **value** = AES-256-GCM **ciphertext of the WS token** + `{salt, iv, tag, base}`.
+  The key `HKDF-SHA256(token, salt)` is derived per request, never persisted.
 
-**Honest guarantee:** unreadable *at rest*, not *never* readable — during a
-request the server decrypts to call Moodle, and `pending` holds the token in
-memory (never on disk) between login and first use. This protects against a
-stolen DB/volume/config; it does **not** protect against compromise of the
-*running* service. Stores are in-memory, so an auth-service restart forces
-re-login (swap the Maps for Redis to persist).
+Two maps hold the SAME sealed WS token under different tokens, because `/mcp` only
+ever presents the access token and a refresh only presents the refresh token:
+- `vaultAt`: `sha256(access_token)` → sealed WS  (read by `/verify`)
+- `vaultRt`: `sha256(refresh_token)` → sealed WS  (read on refresh)
+
+Flow:
+- **Consent:** WS goes into an in-memory single-use `pending[link]`; only the
+  random `link` handle is placed in the Hydra session.
+- **Code exchange (proxied token endpoint):** recover WS from `pending` (introspect
+  the new AT → `ext.link`), seal under the new AT + RT.
+- **Refresh (proxied token endpoint):** recover WS from `vaultRt[old RT]`, re-seal
+  under the new AT + RT. The WS value is unchanged — only re-wrapped.
+- **`/mcp`:** introspect the AT (validity/revocation), `unsealByAccess(AT)`, inject
+  headers.
+
+**Honest guarantee:** unreadable *at rest* (a store dump is `{hash → ciphertext}`,
+useless without a live token to both locate and decrypt an entry), not *never*
+readable — during a request the server decrypts to call Moodle. Protects a stolen
+DB/volume/config and a between-requests RAM dump; does **not** protect a
+compromised *running* service. Stores are in-memory, so an auth-service restart
+forces re-login (the ciphertext-by-hash values are safe to persist to Redis —
+deferred).
 
 ## Architecture
 
@@ -117,13 +125,13 @@ and **reimplements the NCCU SSO flow itself** (`auth/src/moodle.ts`, ported from
 
 - `GET/POST /login` — the Moodle login page; on submit it runs SSO, mints a WS
   token, and accepts the Hydra login with `{moodle_token, moodle_base}` as
-  `context`. The consent step (auto-granted, first-party) stashes the token in the
-  in-memory vault and puts only a random `link` handle into the session `ext`
-  (see "Token storage").
+  `context`. Consent (auto-granted, first-party) stashes the token in `pending`
+  and puts only a random `link` handle into the session `ext` (see "Token storage").
+- `POST /oauth2/token` — transparent proxy to Hydra that re-wraps the WS token
+  under the freshly issued access/refresh tokens (`auth/src/tokenproxy.ts`).
 - `GET /verify` — Caddy `forward_auth` target: introspects the bearer token,
-  resolves the WS token from the vault (bootstrapping from `ext.link` on the first
-  request), and returns `X-Moodle-Token` / `X-Moodle-Base`. A missing/expired
-  token → 401 with `WWW-Authenticate: … resource_metadata=…`.
+  `unsealByAccess` from the vault, and returns `X-Moodle-Token` / `X-Moodle-Base`.
+  A missing/expired token → 401 with `WWW-Authenticate: … resource_metadata=…`.
 - The discovery documents (below).
 
 ## Dynamic Client Registration + discovery
@@ -132,7 +140,7 @@ So an MCP client (ChatGPT) can **register itself** when the connector is added b
 URL — no manual client setup:
 
 - Hydra DCR is enabled (`OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED=true`), exposing
-  `POST /oauth2/register` (RFC 7591). Default scopes: `openid offline moodle`.
+  `POST /oauth2/register` (RFC 7591). Default scopes: `openid offline_access moodle`.
 - Hydra serves `/.well-known/openid-configuration` but **not** RFC 8414 metadata
   and does **not** advertise the DCR endpoint. So the auth service publishes:
   - `/.well-known/oauth-authorization-server` (RFC 8414) — includes
