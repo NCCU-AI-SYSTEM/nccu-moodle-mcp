@@ -33,18 +33,33 @@
 		reverse_proxy auth:3000
 	}
 
-	# --- MCP endpoint: verify the bearer token, inject the Moodle token ---
+	# --- MCP endpoint: dual auth ---
 	handle /mcp* {
-		forward_auth auth:3000 {
-			uri /verify
-			# Copy the Moodle token + base from the verify response onto the
-			# request that goes upstream to the MCP server.
-			copy_headers X-Moodle-Token X-Moodle-Base
+		# Header-credential clients (e.g. Claude Code) send X-Moodle-Username /
+		# X-Moodle-Password: pass straight through to the MCP server, which does
+		# its own SSO login. Skip OAuth. Strip any client-supplied token headers
+		# so only the real user/pass drives the backend.
+		@headercreds header_regexp X-Moodle-Username .+
+		handle @headercreds {
+			reverse_proxy mcp:3033 {
+				header_up -X-Moodle-Token
+				header_up -X-Moodle-Base
+			}
 		}
-		reverse_proxy mcp:3033 {
-			# The MCP server authenticates via the injected headers, not the
-			# client's bearer token — don't forward it.
-			header_up -Authorization
+
+		# Otherwise: OAuth bearer token -> verify -> inject the Moodle token.
+		handle {
+			forward_auth auth:3000 {
+				uri /verify
+				# Copy the Moodle token + base from the verify response onto the
+				# request that goes upstream to the MCP server.
+				copy_headers X-Moodle-Token X-Moodle-Base
+			}
+			reverse_proxy mcp:3033 {
+				# The MCP server authenticates via the injected headers, not the
+				# client's bearer token — don't forward it.
+				header_up -Authorization
+			}
 		}
 	}
 

@@ -149,12 +149,18 @@ docker compose -f docker-compose.oauth.yml up -d --build
 ```
 
 No client-registration step: MCP clients self-register via DCR. Point your tunnel
-(e.g. Cloudflare) at the Caddy gateway port (`GATEWAY_PORT`, default 8080). In
+(e.g. Cloudflare) at the Caddy gateway port (`GATEWAY_PORT`, default 8971). In
 ChatGPT, add the connector with the MCP URL `${PUBLIC_URL}/mcp`; it discovers the
 AS, self-registers, and runs auth-code + PKCE.
 
 Four services: **hydra-postgres** (Postgres 18), **hydra** (issuer; migrations run
 inline on start), **auth** (login/consent + verify + vault), **caddy** (gateway).
+
+**Dual auth on `/mcp`:** the gateway accepts either an OAuth bearer token (ChatGPT)
+or `X-Moodle-Username` / `X-Moodle-Password` headers. A request carrying the
+credential header is passed straight through to the MCP server (which does its own
+SSO login), skipping OAuth — so header-based clients (Claude Code / opencode) can
+use the same `${PUBLIC_URL}/mcp` URL. Bearer requests take the OAuth path.
 
 ## Status — verified end-to-end (local)
 

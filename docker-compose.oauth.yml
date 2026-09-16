@@ -5,11 +5,11 @@
 #   (no client registration step — ChatGPT self-registers via DCR)
 #
 # Topology (see docs/oauth.md):
-#   ChatGPT ──► Caddy (:8080) ──► Hydra (issuer)            /oauth2/*, /.well-known/*
+#   ChatGPT ──► Caddy (:8971) ──► Hydra (issuer)            /oauth2/*, /.well-known/*
 #                            └──► auth (login/consent)      /login, /consent
 #                            └──► auth /verify → MCP (:3033) /mcp  (token relay)
 #
-# Only Caddy is published. Point your tunnel (e.g. Cloudflare) at :8080 and set
+# Only Caddy is published. Point your tunnel (e.g. Cloudflare) at :8971 and set
 # PUBLIC_URL to that public https URL.
 
 services:
@@ -92,7 +92,7 @@ services:
   caddy:
     image: caddy:2-alpine
     ports:
-      - "${GATEWAY_PORT:-8080}:80"
+      - "${GATEWAY_PORT:-8971}:80"
     volumes:
       - ./oauth/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
