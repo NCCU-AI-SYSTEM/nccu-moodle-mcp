@@ -10,13 +10,19 @@ auth SaaS (Auth0/Clerk/Firebase/…). Everything runs in Docker on our own host.
 - **Issuer: [Ory Hydra](https://www.ory.sh/hydra/)** — open-source, standards-certified
   OAuth2/OIDC server. Issues **opaque** access tokens by default, so the client
   (ChatGPT) never holds anything but a random string.
-- **Token-only relay, no secret stored.** We never persist a Moodle password.
-  The login step exchanges the password for a Moodle **Web Services (WS) token**
-  and keeps only that (server-side, in the Hydra token session).
-- **Re-login on expiry.** When the WS token expires or is revoked, tools return a
-  clear "reconnect" error and the user re-runs the OAuth login. We do **not**
-  silently re-mint (that would require storing the password, since NCCU login is
-  SSO — see below).
+- **Token-only relay, no password stored.** We never persist a Moodle password.
+  The login step exchanges the password (used once, in memory) for a Moodle
+  **Web Services (WS) token** and keeps only that.
+- **WS token unreadable at rest.** The WS token is NOT stored in the Hydra session
+  (which Hydra persists, decryptable with the app's system secret). Instead it is
+  encrypted under the client's **access token** and kept in memory — see
+  "Token storage" below.
+- **No refresh; re-login on expiry.** Refresh tokens are disabled (the `offline`
+  scope is dropped) so the access token does not rotate — required because the WS
+  token is encrypted under it. Access tokens are long-lived (`TTL_ACCESS_TOKEN`,
+  default 8h); on expiry/revocation tools 401 and the user re-runs the OAuth
+  login. We do **not** silently re-mint (NCCU login is SSO — that needs the
+  password, which we never keep).
 
 ## Why a token relay (and not password relay)
 
@@ -34,12 +40,38 @@ Verified facts (probe, 2026-09-15):
 - ⇒ the relay must carry **both** the token and its **base host**. The base host
   is not a secret.
 
+## Token storage (at-rest protection)
+
+The server must not be able to read a stored WS token on its own — only during a
+live request, when the client presents its access token. The only per-user secret
+we receive on each `/mcp` call is the **OAuth access token** (opaque). Hydra
+stores only a **hash** of it, so it is unrecoverable from the database. We use it
+as the encryption key material (`auth/src/vault.ts`):
+
+- `key = HKDF-SHA256(IKM = access_token, salt, info = "moodle-ws")`; the WS token
+  is sealed with **AES-256-GCM** and stored (in memory) keyed by
+  `sha256(access_token)`. A stolen vault/DB reveals only ciphertext.
+- **Bootstrap:** at consent the access token doesn't exist yet, so the WS token
+  goes into an in-memory, single-use, short-TTL `pending` map and only a random
+  **`link` handle** is placed in the Hydra session. On the **first** request the
+  gateway introspects, reads `ext.link`, seals the WS token under the access token
+  into the `vault`, and drops the `pending` entry.
+- Later requests decrypt straight from the vault. Every request still introspects
+  for validity; an inactive token evicts the vault entry and 401s.
+
+**Honest guarantee:** unreadable *at rest*, not *never* readable — during a
+request the server decrypts to call Moodle, and `pending` holds the token in
+memory (never on disk) between login and first use. This protects against a
+stolen DB/volume/config; it does **not** protect against compromise of the
+*running* service. Stores are in-memory, so an auth-service restart forces
+re-login (swap the Maps for Redis to persist).
+
 ## Architecture
 
 ```
-[ChatGPT] ──OAuth (opaque token)──► [Gateway]  introspects token at Hydra,
-                                        │        reads WS token + base from session,
-                                        │        injects headers
+[ChatGPT] ──OAuth (opaque token)──► [Caddy]  forward_auth → auth /verify:
+                                        │       introspect + decrypt WS token
+                                        │       from the vault, inject headers
                                         ▼
                                    [MCP backend]  X-Moodle-Token + X-Moodle-Base
                                                   → token-only MoodleClient
@@ -47,27 +79,25 @@ Verified facts (probe, 2026-09-15):
   OAuth login (once, or after expiry):
   [ChatGPT] ─► Hydra /oauth2/auth ─► [Login/Consent app]
                                         user types Moodle user/pass on OUR page
-                                        → MoodleClient.login → fetch_ws_token
-                                        → store {ws_token, base} in Hydra session
-                                        → accept login/consent
+                                        → SSO → WS token → pending[link]
+                                        → accept login/consent (session carries
+                                          only the random `link` handle)
 ```
 
-Components (all open-source, Docker):
+Components (all open-source, Docker) — **three services**:
 1. **Ory Hydra** — the OAuth2/OIDC issuer. ChatGPT's Authorization/Token URLs
-   point here. Opaque tokens; custom session data carries `{ws_token, base}`.
-2. **Login/Consent app** (small, ours) — the UI Hydra delegates to. Renders a
-   Moodle login form, runs `MoodleClient.login`+`fetch_ws_token`, and on success
-   accepts the Hydra login/consent request with the WS token + base as session
-   data. Password never leaves this request.
-3. **Gateway** — validates/introspects the opaque token at Hydra's admin API,
-   maps the session's `{ws_token, base}` to `X-Moodle-Token` / `X-Moodle-Base`,
-   and reverse-proxies to the MCP backend. (oauth2-proxy + a small introspection
-   shim, or Caddy `forward_auth` — TBD in the compose step.)
-4. **MCP backend** — this repo. Accepts the relayed headers (done, below).
+   point here. Opaque tokens; DCR enabled. Uses **SQLite** with migrations run
+   inline on start (no separate database or migrate service).
+2. **Auth service** (`auth/`, ours) — login/consent UI + the `/verify`
+   gateway-check + the discovery docs + the token **vault** (`vault.ts`). Renders
+   the Moodle login, reimplements SSO to mint the WS token, and holds it encrypted
+   under the access token. Password never leaves the login request.
+3. **Caddy gateway** — routes issuer/login/metadata traffic, and `forward_auth`s
+   `/mcp` requests through the auth service's `/verify` (which injects
+   `X-Moodle-Token` / `X-Moodle-Base`) before reverse-proxying to the MCP backend.
 
-> Note: `oauth2-proxy` is a **relying party**, not an issuer — it cannot mint
-> tokens for ChatGPT on its own. Hydra is the issuer; oauth2-proxy (if used) sits
-> on the resource-server side.
+The MCP backend is this repo's existing server, reached behind Caddy; it accepts
+the relayed headers (see "Backend support").
 
 ## Backend support (implemented on this branch)
 
@@ -87,11 +117,13 @@ and **reimplements the NCCU SSO flow itself** (`auth/src/moodle.ts`, ported from
 
 - `GET/POST /login` — the Moodle login page; on submit it runs SSO, mints a WS
   token, and accepts the Hydra login with `{moodle_token, moodle_base}` as
-  `context`. The consent step (auto-granted, first-party) copies that into the
-  token session's `access_token` extras, which surface as `ext` on introspection.
-- `GET /verify` — Caddy `forward_auth` target: introspects the bearer token and
-  returns `X-Moodle-Token` / `X-Moodle-Base` for the gateway to inject. A missing
-  or expired token → 401 with `WWW-Authenticate: … resource_metadata=…`.
+  `context`. The consent step (auto-granted, first-party) stashes the token in the
+  in-memory vault and puts only a random `link` handle into the session `ext`
+  (see "Token storage").
+- `GET /verify` — Caddy `forward_auth` target: introspects the bearer token,
+  resolves the WS token from the vault (bootstrapping from `ext.link` on the first
+  request), and returns `X-Moodle-Token` / `X-Moodle-Base`. A missing/expired
+  token → 401 with `WWW-Authenticate: … resource_metadata=…`.
 - The discovery documents (below).
 
 ## Dynamic Client Registration + discovery
@@ -114,13 +146,15 @@ URL — no manual client setup:
 ```
 cp oauth/.env.example .env         # set PUBLIC_URL (your tunnel https URL) + secrets
 docker compose -f docker-compose.oauth.yml up -d --build
-# optional (DCR makes it unnecessary): pre-register a client
-./oauth/register-client.sh
 ```
 
-Point your tunnel (e.g. Cloudflare) at the Caddy gateway port (`GATEWAY_PORT`,
-default 8080). In ChatGPT, add the connector with the MCP URL `${PUBLIC_URL}/mcp`;
-it discovers the AS, self-registers, and runs auth-code + PKCE.
+No client-registration step: MCP clients self-register via DCR. Point your tunnel
+(e.g. Cloudflare) at the Caddy gateway port (`GATEWAY_PORT`, default 8080). In
+ChatGPT, add the connector with the MCP URL `${PUBLIC_URL}/mcp`; it discovers the
+AS, self-registers, and runs auth-code + PKCE.
+
+Four services: **hydra-postgres** (Postgres 18), **hydra** (issuer; migrations run
+inline on start), **auth** (login/consent + verify + vault), **caddy** (gateway).
 
 ## Status — verified end-to-end (local)
 

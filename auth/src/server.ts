@@ -4,13 +4,14 @@
  *   GET  /login    Hydra redirects here with ?login_challenge=; render the form.
  *   POST /login    verify Moodle via SSO, mint a WS token, accept the login.
  *   GET  /consent  Hydra redirects here with ?consent_challenge=; auto-grant and
- *                  stash {moodle_token, moodle_base} in the token session.
- *   GET  /verify   Caddy forward_auth target: introspect the bearer token and
- *                  return X-Moodle-Token / X-Moodle-Base for the gateway to inject.
+ *                  carry only a random `link` handle in the session (the WS token
+ *                  stays in the in-memory vault, never in Hydra/Postgres).
+ *   GET  /verify   Caddy forward_auth target: introspect the bearer token, resolve
+ *                  the Moodle token from the vault, and return X-Moodle-* headers.
  *   GET  /healthz  liveness.
  */
 import express from "express";
-import { loginAndMintToken, MoodleAuthError } from "./moodle";
+import { loginAndMintToken, MoodleAuthError } from "./moodle.js";
 import {
   acceptConsent,
   acceptLogin,
@@ -18,14 +19,15 @@ import {
   getLoginRequest,
   introspect,
   rejectLogin,
-} from "./hydra";
-import { loginPage } from "./views";
+} from "./hydra.js";
+import { loginPage } from "./views.js";
+import { evict, resolveToken, stashPending } from "./vault.js";
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
-const SCOPES = ["openid", "offline", "moodle"];
+const SCOPES = ["openid", "moodle"];
 const RESOURCE_META = `${PUBLIC_URL}/.well-known/oauth-protected-resource`;
 
 app.get("/healthz", (_req, res) => res.type("text").send("ok"));
@@ -45,7 +47,9 @@ app.get("/.well-known/oauth-authorization-server", (_req, res) => {
     userinfo_endpoint: `${PUBLIC_URL}/userinfo`,
     scopes_supported: SCOPES,
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    // No refresh: the WS token is encrypted under the access token, which must
+    // not rotate (see vault.ts). Access tokens are re-minted by re-login.
+    grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: [
       "client_secret_post",
@@ -109,10 +113,10 @@ app.get("/consent", async (req, res) => {
   try {
     const cr = await getConsentRequest(challenge);
     const ctx = (cr.context || {}) as Record<string, unknown>;
-    const redirectTo = await acceptConsent(challenge, cr, {
-      moodle_token: ctx.moodle_token,
-      moodle_base: ctx.moodle_base,
-    });
+    // Do NOT put the WS token in the Hydra session (it would be persisted,
+    // server-readable). Stash it in memory and carry only a random handle.
+    const link = stashPending(String(ctx.moodle_token || ""), String(ctx.moodle_base || ""));
+    const redirectTo = await acceptConsent(challenge, cr, { link });
     res.redirect(redirectTo);
   } catch (e) {
     console.error("consent error", e);
@@ -131,15 +135,22 @@ app.all("/verify", async (req, res) => {
     return res.status(401).end();
   }
   try {
-    const intro = await introspect(m[1]);
-    const token = intro.ext?.moodle_token as string | undefined;
-    const base = intro.ext?.moodle_base as string | undefined;
-    if (!intro.active || !token) {
+    const accessToken = m[1];
+    const intro = await introspect(accessToken);
+    if (!intro.active) {
+      evict(accessToken); // token expired/revoked — drop any vault entry
       res.set("WWW-Authenticate", challenge("invalid_token"));
       return res.status(401).end();
     }
-    res.set("X-Moodle-Token", token);
-    if (base) res.set("X-Moodle-Base", base);
+    // Decrypt the Moodle token from the vault (or bootstrap it on the first
+    // request from the pending handle carried in the session `ext.link`).
+    const resolved = resolveToken(accessToken, intro.ext?.link as string | undefined);
+    if (!resolved || !resolved.wsToken) {
+      res.set("WWW-Authenticate", challenge("invalid_token"));
+      return res.status(401).end();
+    }
+    res.set("X-Moodle-Token", resolved.wsToken);
+    if (resolved.base) res.set("X-Moodle-Base", resolved.base);
     res.status(200).end();
   } catch (e) {
     console.error("verify error", e);

@@ -2,7 +2,7 @@
 #
 #   cp oauth/.env.example .env      # set PUBLIC_URL + secrets
 #   docker compose -f docker-compose.oauth.yml up -d --build
-#   ./oauth/register-client.sh      # register the ChatGPT OAuth client
+#   (no client registration step — ChatGPT self-registers via DCR)
 #
 # Topology (see docs/oauth.md):
 #   ChatGPT ──► Caddy (:8080) ──► Hydra (issuer)            /oauth2/*, /.well-known/*
@@ -13,13 +13,16 @@
 # PUBLIC_URL to that public https URL.
 
 services:
-  # --- Ory Hydra: the OAuth2/OIDC issuer + its database ---------------------- #
+  # --- Postgres 18: Hydra's database ---------------------------------------- #
   hydra-postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: hydra
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydra-secret}
       POSTGRES_DB: hydra
+      # Postgres 18 changed the default data dir; pin it to the mounted volume
+      # so the cluster actually persists.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - hydra-pg:/var/lib/postgresql/data
     healthcheck:
@@ -28,19 +31,12 @@ services:
       timeout: 5s
       retries: 10
 
-  hydra-migrate:
-    image: oryd/hydra:v2.2.0
-    command: migrate sql -e --yes
-    environment:
-      DSN: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
-    depends_on:
-      hydra-postgres:
-        condition: service_healthy
-    restart: on-failure
-
+  # --- Ory Hydra: the OAuth2/OIDC issuer ------------------------------------ #
+  # Migrations run inline on start, so there is no separate migrate service.
   hydra:
     image: oryd/hydra:v2.2.0
-    command: serve all --dev   # --dev: HTTP ok (TLS is terminated at the tunnel)
+    entrypoint: ["sh", "-c"]
+    command: ["hydra migrate sql -e --yes && hydra serve all --dev"]
     environment:
       DSN: postgres://hydra:${POSTGRES_PASSWORD:-hydra-secret}@hydra-postgres:5432/hydra?sslmode=disable
       SECRETS_SYSTEM: ${HYDRA_SECRET:?set HYDRA_SECRET in .env (32+ chars)}
@@ -50,16 +46,19 @@ services:
       URLS_CONSENT: ${PUBLIC_URL}/consent
       # Opaque access tokens (default) so the client never sees the Moodle token.
       STRATEGIES_ACCESS_TOKEN: opaque
-      TTL_ACCESS_TOKEN: 1h
+      # No refresh (offline dropped): the WS token is encrypted under the access
+      # token, which must not rotate — so give it a longer life and re-login on
+      # expiry. See auth/src/vault.ts and docs/oauth.md.
+      TTL_ACCESS_TOKEN: 8h
       OAUTH2_EXPOSE_INTERNAL_ERRORS: "true"
       # Dynamic Client Registration (RFC 7591): let an MCP client (ChatGPT)
       # register itself when the connector is added by URL — no manual client
       # setup. Access still requires a Moodle SSO login at consent.
       OIDC_DYNAMIC_CLIENT_REGISTRATION_ENABLED: "true"
-      OIDC_DYNAMIC_CLIENT_REGISTRATION_DEFAULT_SCOPE: openid,offline,moodle
+      OIDC_DYNAMIC_CLIENT_REGISTRATION_DEFAULT_SCOPE: openid,moodle
     depends_on:
-      hydra-migrate:
-        condition: service_completed_successfully
+      hydra-postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # --- Our independent login/consent + verify service ----------------------- #
@@ -88,16 +87,6 @@ services:
       - MCP_PORT=3033
       - MCP_ALLOWED_HOSTS=*
     restart: unless-stopped
-
-  # --- One-off helper to register the OAuth client via Hydra's Admin API ---- #
-  # Not started normally (profile "tools"); invoked by oauth/register-client.sh.
-  client-register:
-    image: curlimages/curl:8.10.1
-    profiles: ["tools"]
-    entrypoint: ["sh", "-c"]
-    command: ["true"]
-    depends_on:
-      - hydra
 
   # --- Gateway: routes public traffic, relays the token to the MCP ---------- #
   caddy:
