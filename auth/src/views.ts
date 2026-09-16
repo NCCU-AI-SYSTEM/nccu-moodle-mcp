@@ -109,6 +109,8 @@ export function loginPage(challenge: string, error?: string): string {
 
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex;
              align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .overlay[hidden] { display:none; }   /* explicit display above overrides the
+                                          hidden attribute, so restore it here */
   .modal { width:min(94vw,520px); max-height:86vh; display:flex; flex-direction:column;
            background:#fff; color:#222; border-radius:12px; overflow:hidden; }
   @media (prefers-color-scheme: dark){ .modal{ background:#1c1c1e; color:#eee; } }
