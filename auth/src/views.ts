@@ -49,11 +49,12 @@ const TERMS: [string, string][] = [
   [
     "6. Moodle access token — stored encrypted",
     "After sign-in the Service holds a Moodle web-services token that authorises access to " +
-      "your Moodle data. This token is encrypted (AES-256-GCM) with a key derived from your " +
-      "session’s OAuth tokens, kept only in server memory, and never written to disk in " +
-      "readable form. It cannot be decrypted without a live request from your Connected " +
-      "Application, and it is discarded when your session ends or expires, or when the server " +
-      "restarts.",
+      "your Moodle data. This token is stored ONLY in encrypted form (AES-256-GCM), indexed by " +
+      "a one-way hash of your session’s OAuth tokens; the decryption key is derived from " +
+      "those tokens on each request and is never stored. It is therefore never written to disk " +
+      "in readable form and cannot be decrypted without a live request from your Connected " +
+      "Application. The encrypted record is deleted when your session or tokens expire or are " +
+      "revoked.",
   ],
   [
     "7. Data we access and process",
