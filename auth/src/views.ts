@@ -6,74 +6,185 @@ function esc(s: string): string {
   );
 }
 
-// Static Terms & Conditions / data-use text. Plain, self-contained.
+// Static Terms & Conditions / data-use text. Plain, self-contained. Not legal
+// advice; the operator is encouraged to have counsel review before wide use.
 const TERMS: [string, string][] = [
   [
-    "1. The Service",
-    "This service (the “Service”) lets an application you have connected " +
-      "(for example, an AI assistant such as ChatGPT) access your NCCU Moodle account " +
-      "on your behalf, via NCCU single sign-on (i.nccu.edu.tw) and the Moodle " +
-      "web-services API. It is an independent, self-hosted tool.",
+    "1. Acceptance of Terms",
+    "These Terms & Conditions and Data-Use terms (the “Terms”) form a binding " +
+      "agreement between you (the “User”) and the operator of this service (the " +
+      "“Operator”, “we”, “us”). By entering your credentials, " +
+      "ticking the consent box, and signing in, you confirm that you have read, understood, " +
+      "and agree to be bound by these Terms. If you do not agree, do not sign in or use the " +
+      "Service.",
   ],
   [
-    "2. Your credentials — password is never stored",
-    "Your iNCCU (NCCU portal) account ID and password are submitted on this page and " +
-      "used one time, in server memory, solely to complete NCCU single sign-on and " +
-      "obtain a Moodle access token. Your password is NEVER written to disk, NEVER " +
-      "logged, and NEVER shared, and is discarded immediately after authentication. " +
-      "The connected application and its AI model never receive your password.",
+    "2. Definitions",
+    "“Service” means this authentication/login gateway together with the NCCU " +
+      "Moodle MCP server it connects to. “Connected Application” means the " +
+      "third-party application you authorise to use the Service on your behalf (for example, " +
+      "ChatGPT). “Moodle” means NCCU’s Moodle learning platform. " +
+      "“Credentials” means your iNCCU (NCCU portal) account ID and password.",
   ],
   [
-    "3. Moodle access token — stored encrypted",
-    "After sign-in the Service holds a Moodle web-services token that authorizes access " +
-      "to your Moodle data. This token is encrypted (AES-256-GCM) with a key derived " +
-      "from your session’s OAuth tokens, kept only in server memory, and never " +
-      "written to disk in readable form. It cannot be decrypted without a live request " +
-      "from your connected application, and it is discarded when your session ends or " +
-      "expires, or when the server restarts.",
+    "3. The Service",
+    "The Service lets a Connected Application access your NCCU Moodle account on your behalf, " +
+      "via NCCU single sign-on (i.nccu.edu.tw) and the Moodle web-services API. It is an " +
+      "independent, self-hosted, non-commercial tool provided free of charge.",
   ],
   [
-    "4. Data accessed",
-    "Using your token, the Service reads only the Moodle data needed to fulfil requests " +
-      "you make through the connected application — such as your courses, " +
-      "assignments, grades, announcements, files and submissions — and, only where " +
-      "you explicitly ask, may save assignment text on your behalf. It accesses your " +
-      "data only in response to your requests.",
+    "4. Eligibility & authority",
+    "You may use the Service only if you hold a valid NCCU account and are authorised to " +
+      "access the Moodle data you request. You represent that your use complies with all NCCU " +
+      "rules and applicable law, and that you will use only your own account and credentials.",
   ],
   [
-    "5. Data sharing",
-    "The results of your requests are returned to the application you connected, which is " +
-      "operated by a third party under its own terms and privacy policy. The Service does " +
-      "not sell your data or share it with any other third party. All traffic is carried " +
-      "over encrypted (HTTPS) connections.",
+    "5. Your credentials — password is never stored",
+    "Your Credentials are submitted on this page and used one time, in server memory, solely " +
+      "to complete NCCU single sign-on and obtain a Moodle access token. Your password is " +
+      "NEVER written to disk, NEVER logged, and NEVER shared, and is discarded immediately " +
+      "after authentication. The Connected Application and its AI model never receive your " +
+      "password. You are responsible for keeping your Credentials confidential.",
   ],
   [
-    "6. No affiliation",
-    "The Service is not affiliated with, authorised by, endorsed by, or operated by " +
-      "National Chengchi University (NCCU) or Moodle. “NCCU” and “Moodle” " +
-      "are used only to identify the systems being accessed.",
+    "6. Moodle access token — stored encrypted",
+    "After sign-in the Service holds a Moodle web-services token that authorises access to " +
+      "your Moodle data. This token is encrypted (AES-256-GCM) with a key derived from your " +
+      "session’s OAuth tokens, kept only in server memory, and never written to disk in " +
+      "readable form. It cannot be decrypted without a live request from your Connected " +
+      "Application, and it is discarded when your session ends or expires, or when the server " +
+      "restarts.",
   ],
   [
-    "7. Your responsibilities",
-    "You may use the Service only with your own account and in compliance with NCCU’s " +
-      "acceptable-use and IT policies and all applicable rules. Note: NCCU locks an account " +
-      "for 15 minutes after 5 failed sign-in attempts.",
+    "7. Data we access and process",
+    "Using your token, the Service reads only the Moodle data needed to fulfil requests you " +
+      "make through the Connected Application — such as your courses, assignments, grades, " +
+      "announcements, files and submissions — and, only where you explicitly ask, may " +
+      "save assignment text on your behalf. It accesses your data only in response to your " +
+      "requests and does not build a persistent profile of you.",
   ],
   [
-    "8. Revocation & no warranty",
-    "You may disconnect the application or stop using the Service at any time, which ends " +
-      "its access; tokens also expire automatically. The Service is provided “as is” " +
-      "and “as available”, without warranties of any kind. To the maximum extent " +
-      "permitted by law, the operator is not liable for any damages arising from your use " +
-      "of the Service, including any loss of data or academic consequences. You use the " +
-      "Service at your own risk.",
+    "8. Third-party services & data sharing",
+    "The results of your requests are returned to the Connected Application, which is operated " +
+      "by a third party under its own terms and privacy policy and is outside our control. The " +
+      "Service also relies on third parties such as NCCU, network/tunnel and hosting providers. " +
+      "We do not sell your data or share it with any other third party. All traffic is carried " +
+      "over encrypted (HTTPS) connections. We are not responsible for the acts, omissions, " +
+      "terms, or privacy practices of any third party.",
   ],
   [
-    "9. Acceptance",
-    "By entering your credentials and signing in, you acknowledge that you have read and " +
-      "agree to these Terms & Conditions and Data-Use terms. You understand that your " +
-      "password is used only to sign in and is never stored, and that your Moodle token " +
-      "is stored only in encrypted form.",
+    "9. Acceptable use",
+    "You agree not to: use the Service in violation of any law or NCCU policy; access, or " +
+      "attempt to access, any account or data that is not your own; interfere with, overload, " +
+      "probe, or disrupt the Service or the systems it connects to; circumvent authentication or " +
+      "rate limits; or use the Service for any unlawful, harmful, or abusive purpose. We may " +
+      "throttle, suspend, or block use that we believe violates this section.",
+  ],
+  [
+    "10. Academic integrity — your responsibility",
+    "You are solely responsible for complying with NCCU’s academic-integrity, examination, " +
+      "and coursework rules. The Service and any AI output are aids only; using them does not " +
+      "authorise plagiarism, unauthorised assistance, contract cheating, or misrepresentation of " +
+      "your work. Any assignment save or submission made through the Service is your own act and " +
+      "responsibility. The Operator is not responsible or liable for any academic penalty, " +
+      "disciplinary action, or other consequence arising from your use.",
+  ],
+  [
+    "11. AI output & accuracy disclaimer",
+    "Content produced with the help of the Connected Application’s AI may be inaccurate, " +
+      "incomplete, outdated, or misleading, and may not reflect the true state of your Moodle " +
+      "account. Do not rely on it for grades, deadlines, submission status, or any official " +
+      "information; always verify against Moodle and official NCCU channels. The Service does " +
+      "not guarantee the accuracy, completeness, or timeliness of any data, result, or action.",
+  ],
+  [
+    "12. No affiliation; trademarks",
+    "The Service is not affiliated with, authorised by, endorsed by, sponsored by, or operated " +
+      "by National Chengchi University (NCCU), Moodle, or the operator of any Connected " +
+      "Application. All names and trademarks (including “NCCU” and “Moodle”) " +
+      "belong to their respective owners and are used only nominatively to identify the systems " +
+      "accessed.",
+  ],
+  [
+    "13. Intellectual property",
+    "Your data remains yours. The Service’s software and design remain the property of the " +
+      "Operator and its licensors. These Terms grant you only a limited, revocable, " +
+      "non-exclusive, non-transferable permission to use the Service as intended; no other rights " +
+      "are granted.",
+  ],
+  [
+    "14. Availability, changes & sessions",
+    "The Service is provided on a best-effort basis and may be modified, suspended, degraded, or " +
+      "discontinued at any time, with or without notice. Access tokens and sessions expire, and " +
+      "you may be required to sign in again. We do not guarantee any level of uptime, " +
+      "performance, or data retention.",
+  ],
+  [
+    "15. Disclaimer of warranties",
+    "THE SERVICE IS PROVIDED “AS IS” AND “AS AVAILABLE”, WITHOUT WARRANTIES " +
+      "OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING WITHOUT LIMITATION IMPLIED " +
+      "WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, " +
+      "ACCURACY, SECURITY, OR UNINTERRUPTED OR ERROR-FREE OPERATION. YOU USE THE SERVICE AT YOUR " +
+      "OWN RISK.",
+  ],
+  [
+    "16. Limitation of liability",
+    "TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE OPERATOR SHALL NOT BE LIABLE FOR ANY INDIRECT, " +
+      "INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF " +
+      "DATA, GRADES, ACADEMIC STANDING, OPPORTUNITIES, OR GOODWILL, ARISING FROM OR RELATED TO " +
+      "YOUR USE OF OR INABILITY TO USE THE SERVICE, EVEN IF ADVISED OF THE POSSIBILITY. TO THE " +
+      "EXTENT LIABILITY CANNOT BE FULLY EXCLUDED, THE OPERATOR’S TOTAL AGGREGATE LIABILITY " +
+      "SHALL NOT EXCEED NEW TAIWAN DOLLARS ZERO (NT$0), AS THE SERVICE IS PROVIDED FREE OF CHARGE.",
+  ],
+  [
+    "17. Indemnification",
+    "You agree to indemnify, defend, and hold harmless the Operator from and against any claims, " +
+      "liabilities, damages, losses, and expenses (including reasonable legal fees) arising from " +
+      "or related to your use of the Service, your violation of these Terms, or your violation of " +
+      "any law or the rights of any third party.",
+  ],
+  [
+    "18. Assumption of risk",
+    "You acknowledge and accept the risks of using an automated, unofficial tool with your NCCU " +
+      "account — including that automated access may interact unexpectedly with Moodle, that " +
+      "data shown may be wrong, and that repeated failed sign-ins can trigger an NCCU account " +
+      "lockout (NCCU locks an account for 15 minutes after 5 failed attempts). You assume these " +
+      "risks voluntarily.",
+  ],
+  [
+    "19. Suspension & termination",
+    "The Operator may suspend or terminate the Service, or your access to it, at any time and " +
+      "for any reason, without notice or liability. You may stop using the Service and revoke " +
+      "its access at any time through the Connected Application. Sections that by their nature " +
+      "should survive termination (including 5–17, 20–22) survive.",
+  ],
+  [
+    "20. Changes to these Terms",
+    "The Operator may update these Terms at any time. Changes take effect when posted on this " +
+      "sign-in page, and your continued use of the Service after changes constitutes acceptance " +
+      "of the updated Terms. If you do not agree to a change, stop using the Service.",
+  ],
+  [
+    "21. Governing law & jurisdiction",
+    "These Terms are governed by the laws of the Republic of China (Taiwan), without regard to " +
+      "its conflict-of-laws rules. You agree to the exclusive jurisdiction of the competent " +
+      "courts located in Taiwan for any dispute arising out of or relating to the Service or " +
+      "these Terms, to the extent permitted by mandatory law.",
+  ],
+  [
+    "22. Severability; waiver; entire agreement",
+    "If any provision of these Terms is held invalid or unenforceable, the remaining provisions " +
+      "remain in full force and effect. Failure to enforce any provision is not a waiver of it. " +
+      "These Terms are the entire agreement between you and the Operator regarding the Service " +
+      "and supersede all prior discussions. The Service does not provide legal, academic, " +
+      "financial, or other professional advice.",
+  ],
+  [
+    "23. Consent",
+    "By entering your credentials and signing in, you acknowledge that you have read and agree " +
+      "to these Terms & Conditions and Data-Use terms, and specifically that your password is " +
+      "used only to sign in and is never stored, and that your Moodle token is stored only in " +
+      "encrypted form.",
   ],
 ];
 
@@ -111,7 +222,7 @@ export function loginPage(challenge: string, error?: string): string {
              align-items:center; justify-content:center; padding:16px; z-index:10; }
   .overlay[hidden] { display:none; }   /* explicit display above overrides the
                                           hidden attribute, so restore it here */
-  .modal { width:min(94vw,520px); max-height:86vh; display:flex; flex-direction:column;
+  .modal { width:min(94vw,540px); max-height:86vh; display:flex; flex-direction:column;
            background:#fff; color:#222; border-radius:12px; overflow:hidden; }
   @media (prefers-color-scheme: dark){ .modal{ background:#1c1c1e; color:#eee; } }
   .modal-head { display:flex; align-items:center; justify-content:space-between;
@@ -158,7 +269,7 @@ export function loginPage(challenge: string, error?: string): string {
       </div>
       <div class="modal-body" id="tc-body">
         ${terms}
-        <p class="tc-end">— End of Terms — scroll reached, you may now agree —</p>
+        <p class="tc-end">— End of Terms — you may now agree —</p>
       </div>
       <div class="modal-foot">
         <button type="button" class="disagree" id="tc-disagree">Disagree</button>
@@ -191,7 +302,6 @@ export function loginPage(challenge: string, error?: string): string {
     overlay.hidden = false;
     document.body.style.overflow = 'hidden';
     body.scrollTop = 0;
-    // allow layout to settle before measuring
     setTimeout(refreshAgree, 0);
   }
   function close() {
