@@ -91,14 +91,17 @@ app.post("/login", async (req, res) => {
   const challenge = String(req.body.challenge || "");
   const username = String(req.body.username || "").trim();
   const password = String(req.body.password || "");
+  const agreed = !!req.body.agree; // preserve consent across error re-renders
   if (!challenge) return res.status(400).send("Missing challenge.");
   if (!username || !password) {
-    return res.type("html").send(loginPage(challenge, "Enter your account and password."));
-  }
-  if (!req.body.agree) {
     return res
       .type("html")
-      .send(loginPage(challenge, "You must accept the Terms & Conditions to continue."));
+      .send(loginPage(challenge, "Enter your account and password.", agreed));
+  }
+  if (!agreed) {
+    return res
+      .type("html")
+      .send(loginPage(challenge, "You must accept the Terms & Conditions to continue.", false));
   }
   try {
     const { wsToken, base } = await loginAndMintToken(username, password);
@@ -110,7 +113,9 @@ app.post("/login", async (req, res) => {
     res.redirect(redirectTo);
   } catch (e) {
     if (e instanceof MoodleAuthError) {
-      return res.type("html").send(loginPage(challenge, e.message));
+      // They already consented to get here — keep the box ticked so they can
+      // just fix the password and retry without re-reading the Terms.
+      return res.type("html").send(loginPage(challenge, e.message, true));
     }
     console.error("login error", e);
     res.status(502).send("Login failed due to a server error. Please try again.");

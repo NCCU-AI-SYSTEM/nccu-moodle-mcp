@@ -188,7 +188,7 @@ const TERMS: [string, string][] = [
   ],
 ];
 
-export function loginPage(challenge: string, error?: string): string {
+export function loginPage(challenge: string, error?: string, agreed = false): string {
   const err = error
     ? `<p role="alert" style="color:#b00020;margin:0 0 12px">${esc(error)}</p>`
     : "";
@@ -253,12 +253,12 @@ export function loginPage(challenge: string, error?: string): string {
     <input id="p" name="password" type="password" autocomplete="current-password" required>
 
     <div class="agree">
-      <input type="checkbox" name="agree" value="yes" id="agree" required>
+      <input type="checkbox" name="agree" value="yes" id="agree" required${agreed ? " checked" : ""}>
       <span>I have read and agree to the
         <a class="tc-link" id="tc-link" role="button" tabindex="0">Terms &amp; Conditions and Data-Use terms</a>.</span>
     </div>
 
-    <button type="submit" class="primary" id="submit" disabled>Sign in</button>
+    <button type="submit" class="primary" id="submit"${agreed ? "" : " disabled"}>Sign in</button>
   </form>
 
   <div class="overlay" id="tc-overlay" hidden>
@@ -346,7 +346,19 @@ export function loginPage(challenge: string, error?: string): string {
     if (e.key === 'Escape' && !overlay.hidden) close();
   });
 
-  setAgreed(false); // start not agreed; Sign in disabled
+  // Disable Sign in on submit so a double-click can't send two requests.
+  document.getElementById('form').addEventListener('submit', function () {
+    submit.disabled = true;
+    submit.textContent = 'Signing in\\u2026';
+  });
+  // Restore the button if we come back to this page (e.g. bfcache back-nav, or a
+  // stalled submit). Server-side errors re-render the page fresh anyway.
+  window.addEventListener('pageshow', function () {
+    submit.textContent = 'Sign in';
+    submit.disabled = !agreed;
+  });
+
+  setAgreed(${agreed ? "true" : "false"}); // initial consent (pre-accepted on a failed retry)
 })();
 </script>
 </body></html>`;
