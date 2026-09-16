@@ -174,7 +174,8 @@ export function loginPage(challenge: string, error?: string): string {
   var submit = document.getElementById('submit');
   var link = document.getElementById('tc-link');
 
-  function setAgreed(v) { cb.checked = v; submit.disabled = !v; }
+  var agreed = false;
+  function setAgreed(v) { agreed = v; cb.checked = v; submit.disabled = !v; }
 
   function atBottom() {
     return body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
@@ -196,14 +197,18 @@ export function loginPage(challenge: string, error?: string): string {
     document.body.style.overflow = '';
   }
 
-  // Clicking the checkbox: if it's not yet agreed, intercept and open the modal
-  // (so it can only be checked by scrolling + agreeing). Unchecking is allowed.
-  cb.addEventListener('click', function (e) {
-    if (!cb.checked) { e.preventDefault(); open(); }
-    else { setAgreed(false); }
-  });
+  // The checkbox can never toggle on its own: always prevent the default toggle
+  // (the browser pre-toggles cb.checked inside the click handler, so we track our
+  // own agreed flag instead of reading cb.checked here). If not yet agreed, open
+  // the modal; if already agreed, a click un-agrees.
+  function boxToggle(e) {
+    e.preventDefault();
+    if (agreed) setAgreed(false);
+    else open();
+  }
+  cb.addEventListener('click', boxToggle);
   cb.addEventListener('keydown', function (e) {
-    if ((e.key === ' ' || e.key === 'Enter') && !cb.checked) { e.preventDefault(); open(); }
+    if (e.key === ' ' || e.key === 'Enter') boxToggle(e);
   });
 
   function openFromLink(e) { e.preventDefault(); open(); }
