@@ -21,10 +21,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydra-secret}
       POSTGRES_DB: hydra
     volumes:
-      # Postgres 18 stores data at the version-specific default PGDATA
-      # (/var/lib/postgresql/18/docker). Mount the volume directly there and do
-      # NOT override PGDATA — the root entrypoint chowns this path to postgres,
-      # so it works on native-Linux hosts (mounting the legacy .../data does not).
       - hydra-pg:/var/lib/postgresql/18/docker
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hydra"]
@@ -75,7 +71,7 @@ services:
       - hydra
     restart: unless-stopped
 
-  # --- The existing MCP server (Python) ------------------------------------- #
+  # --- The actual MCP server (Python) ------------------------------------- #
   mcp:
     build:
       context: .
