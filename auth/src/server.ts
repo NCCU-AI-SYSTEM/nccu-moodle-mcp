@@ -95,6 +95,11 @@ app.post("/login", async (req, res) => {
   if (!username || !password) {
     return res.type("html").send(loginPage(challenge, "Enter your account and password."));
   }
+  if (!req.body.agree) {
+    return res
+      .type("html")
+      .send(loginPage(challenge, "You must accept the Terms & Conditions to continue."));
+  }
   try {
     const { wsToken, base } = await loginAndMintToken(username, password);
     // Carry the token forward to the consent step via Hydra's `context`.
