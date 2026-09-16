@@ -23,6 +23,7 @@ side.
 | `get_grades` | Your grade items for one course (`course_id`). | `gradereport_user_get_grade_items` |
 | `get_course_contents` | Everything the teacher posted in a course (`course_id`), grouped by week/section; empty weeks hidden unless `include_empty`. | `core_course_get_contents` |
 | `get_module` | Open one posted item by `cmid` (the id in a `mod/.../view.php?id=` link; `course_id` optional — resolved from the cmid). Returns content by type — file links (browser-openable), page html, label/forum intro, forum discussions, **rich assignment detail** (instructions, attachments, submission, grade & feedback), quiz attempts. | `core_course_get_course_module` + `core_course_get_contents` (+ `mod_assign`/`mod_page`/`mod_forum`/`mod_quiz` by type) |
+| `submit_assignment` | Submit (繳交) an assignment's online-text answer by `cmid` or `instance`. **Saves only** — never the irreversible submit-for-grading; usually a save already counts as submitted, else returns `needs_finalize` + the Moodle link for the user to finalize themselves. | `mod_assign_save_submission` (+ `core_course_get_course_module` to resolve cmid) |
 | `list_announcements` | Announcement tiles (headers only) for one course or all current-semester courses; paginated. | `mod_forum_get_forums_by_courses` + `mod_forum_get_forum_discussions` |
 | `get_announcement` | Read one announcement's thread (posts + replies) by `discussion_id`; paginated. | `mod_forum_get_discussion_posts` |
 | `get_notifications` | The notification bell (due reminders, grading, forum posts); reports unread count. | `message_popup_get_popup_notifications` |
@@ -292,6 +293,7 @@ src/nccu_moodle_mcp/        the package
     ├── grades.py           get_grades
     ├── contents.py         get_course_contents
     ├── module.py           get_module (open one item, dispatch by type)
+    ├── submissions.py      submit_assignment (save online-text; no finalize)
     ├── announcements.py    list_announcements, get_announcement
     └── notifications.py    get_notifications
 scripts/

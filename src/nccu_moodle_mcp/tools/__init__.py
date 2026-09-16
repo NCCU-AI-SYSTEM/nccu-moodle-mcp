@@ -11,4 +11,5 @@ from . import (  # noqa: F401 -- imported for their @mcp.tool registration side 
     grades,
     module,
     notifications,
+    submissions,
 )
