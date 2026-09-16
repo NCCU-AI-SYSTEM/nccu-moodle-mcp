@@ -20,11 +20,12 @@ services:
       POSTGRES_USER: hydra
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydra-secret}
       POSTGRES_DB: hydra
-      # Postgres 18 changed the default data dir; pin it to the mounted volume
-      # so the cluster actually persists.
-      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - hydra-pg:/var/lib/postgresql/data
+      # Postgres 18 stores data at the version-specific default PGDATA
+      # (/var/lib/postgresql/18/docker). Mount the volume directly there and do
+      # NOT override PGDATA — the root entrypoint chowns this path to postgres,
+      # so it works on native-Linux hosts (mounting the legacy .../data does not).
+      - hydra-pg:/var/lib/postgresql/18/docker
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hydra"]
       interval: 5s
