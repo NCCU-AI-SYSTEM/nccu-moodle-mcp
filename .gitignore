@@ -10,6 +10,7 @@ env/
 .env
 .env.*
 !.env.example
+!.env.oauth.example
 *.secret
 
 # Personal MCP client configs (may contain NCCU credentials in headers)

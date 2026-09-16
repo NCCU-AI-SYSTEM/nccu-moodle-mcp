@@ -144,7 +144,7 @@ URL — no manual client setup:
 ## Deploy (Docker)
 
 ```
-cp oauth/.env.example .env         # set PUBLIC_URL (your tunnel https URL) + secrets
+cp .env.oauth.example .env         # set PUBLIC_URL (your tunnel https URL) + secrets
 docker compose -f docker-compose.oauth.yml up -d --build
 ```
 
